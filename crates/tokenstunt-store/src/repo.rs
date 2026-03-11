@@ -104,6 +104,15 @@ impl Store {
 
     pub fn ensure_repo(&self, path: &str, name: &str) -> Result<i64> {
         let conn = self.write_lock()?;
+        self.ensure_repo_with_conn(&conn, path, name)
+    }
+
+    pub(crate) fn ensure_repo_with_conn(
+        &self,
+        conn: &Connection,
+        path: &str,
+        name: &str,
+    ) -> Result<i64> {
         conn.execute(
             "INSERT OR IGNORE INTO repos (path, name) VALUES (?1, ?2)",
             params![path, name],
@@ -125,6 +134,18 @@ impl Store {
         mtime_ns: i64,
     ) -> Result<i64> {
         let conn = self.write_lock()?;
+        self.upsert_file_with_conn(&conn, repo_id, path, content_hash, language, mtime_ns)
+    }
+
+    pub(crate) fn upsert_file_with_conn(
+        &self,
+        conn: &Connection,
+        repo_id: i64,
+        path: &str,
+        content_hash: u64,
+        language: &str,
+        mtime_ns: i64,
+    ) -> Result<i64> {
         conn.execute(
             "INSERT INTO files (repo_id, path, content_hash, language, mtime_ns)
              VALUES (?1, ?2, ?3, ?4, ?5)
@@ -144,6 +165,15 @@ impl Store {
 
     pub fn get_file_hash(&self, repo_id: i64, path: &str) -> Result<Option<u64>> {
         let conn = self.read_lock()?;
+        self.get_file_hash_with_conn(&conn, repo_id, path)
+    }
+
+    pub(crate) fn get_file_hash_with_conn(
+        &self,
+        conn: &Connection,
+        repo_id: i64,
+        path: &str,
+    ) -> Result<Option<u64>> {
         let result = conn.query_row(
             "SELECT content_hash FROM files WHERE repo_id = ?1 AND path = ?2",
             params![repo_id, path],
@@ -161,6 +191,14 @@ impl Store {
 
     pub fn delete_file_blocks(&self, file_id: i64) -> Result<()> {
         let conn = self.write_lock()?;
+        self.delete_file_blocks_with_conn(&conn, file_id)
+    }
+
+    pub(crate) fn delete_file_blocks_with_conn(
+        &self,
+        conn: &Connection,
+        file_id: i64,
+    ) -> Result<()> {
         conn.execute(
             "DELETE FROM code_blocks WHERE file_id = ?1",
             params![file_id],
@@ -180,6 +218,23 @@ impl Store {
         parent_id: Option<i64>,
     ) -> Result<i64> {
         let conn = self.write_lock()?;
+        self.insert_code_block_with_conn(
+            &conn, file_id, name, kind, start_line, end_line, content, signature, parent_id,
+        )
+    }
+
+    pub(crate) fn insert_code_block_with_conn(
+        &self,
+        conn: &Connection,
+        file_id: i64,
+        name: &str,
+        kind: CodeBlockKind,
+        start_line: u32,
+        end_line: u32,
+        content: &str,
+        signature: &str,
+        parent_id: Option<i64>,
+    ) -> Result<i64> {
         conn.execute(
             "INSERT INTO code_blocks (file_id, name, kind, start_line, end_line, content, signature, parent_id)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -238,6 +293,15 @@ impl Store {
         kind: Option<CodeBlockKind>,
     ) -> Result<Vec<CodeBlock>> {
         let conn = self.read_lock()?;
+        self.lookup_symbol_with_conn(&conn, name, kind)
+    }
+
+    pub(crate) fn lookup_symbol_with_conn(
+        &self,
+        conn: &Connection,
+        name: &str,
+        kind: Option<CodeBlockKind>,
+    ) -> Result<Vec<CodeBlock>> {
         if let Some(k) = kind {
             let kind_filter = k.as_str();
             let mut stmt = conn.prepare(
@@ -332,6 +396,17 @@ impl Store {
         kind: &str,
     ) -> Result<()> {
         let conn = self.write_lock()?;
+        self.insert_dependency_with_conn(&conn, source_block_id, target_block_id, target_name, kind)
+    }
+
+    pub(crate) fn insert_dependency_with_conn(
+        &self,
+        conn: &Connection,
+        source_block_id: i64,
+        target_block_id: i64,
+        target_name: &str,
+        kind: &str,
+    ) -> Result<()> {
         conn.execute(
             "INSERT INTO dependencies (source_block_id, target_block_id, target_name, kind, resolved)
              VALUES (?1, ?2, ?3, ?4, 1)",
@@ -355,11 +430,20 @@ impl Store {
     }
 
     pub fn delete_stale_files(&self, repo_id: i64, current_paths: &[String]) -> Result<u64> {
+        let conn = self.write_lock()?;
+        self.delete_stale_files_with_conn(&conn, repo_id, current_paths)
+    }
+
+    pub(crate) fn delete_stale_files_with_conn(
+        &self,
+        conn: &Connection,
+        repo_id: i64,
+        current_paths: &[String],
+    ) -> Result<u64> {
         if current_paths.is_empty() {
             return Ok(0);
         }
 
-        let conn = self.write_lock()?;
         let placeholders: String = current_paths
             .iter()
             .enumerate()
@@ -639,6 +723,34 @@ mod tests {
         });
         assert!(result.is_ok());
         assert_eq!(store.file_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_with_conn_variants_in_transaction() {
+        let store = Store::open_in_memory().unwrap();
+        let repo_id = store.ensure_repo("/test", "test").unwrap();
+
+        store
+            .write_transaction(|conn| {
+                let file_id =
+                    store.upsert_file_with_conn(conn, repo_id, "a.ts", 1, "typescript", 0)?;
+                store.insert_code_block_with_conn(
+                    conn,
+                    file_id,
+                    "greet",
+                    CodeBlockKind::Function,
+                    1,
+                    5,
+                    "function greet() {}",
+                    "function greet()",
+                    None,
+                )?;
+                store.delete_file_blocks_with_conn(conn, file_id)?;
+                Ok(())
+            })
+            .unwrap();
+
+        assert_eq!(store.block_count().unwrap(), 0);
     }
 
     #[test]
