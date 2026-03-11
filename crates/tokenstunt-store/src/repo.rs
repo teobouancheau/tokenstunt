@@ -8,57 +8,75 @@ use crate::models::{CodeBlock, CodeBlockKind};
 use crate::schema;
 
 pub struct Store {
-    conn: Mutex<Connection>,
+    read_conn: Mutex<Connection>,
+    write_conn: Mutex<Connection>,
     db_path: PathBuf,
+    is_temp: bool,
 }
 
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
         let db_path = path.to_path_buf();
-        let conn = Connection::open(path)
+        let write_conn = Connection::open(path)
             .with_context(|| format!("failed to open database at {}", path.display()))?;
-        schema::initialize(&conn)?;
+        schema::initialize(&write_conn)?;
+        let read_conn = Connection::open(path)
+            .with_context(|| format!("failed to open read connection at {}", path.display()))?;
+        read_conn.execute_batch("PRAGMA journal_mode = WAL;")?;
+        read_conn.execute_batch("PRAGMA synchronous = NORMAL;")?;
+        read_conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         Ok(Self {
-            conn: Mutex::new(conn),
+            read_conn: Mutex::new(read_conn),
+            write_conn: Mutex::new(write_conn),
             db_path,
+            is_temp: false,
         })
     }
 
     pub fn open_in_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory()?;
-        schema::initialize(&conn)?;
-        Ok(Self {
-            conn: Mutex::new(conn),
-            db_path: PathBuf::from(":memory:"),
-        })
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let db_path =
+            std::env::temp_dir().join(format!("tokenstunt_mem_{}_{id}.db", std::process::id()));
+        let _ = std::fs::remove_file(&db_path);
+        let mut store = Self::open(&db_path)?;
+        store.is_temp = true;
+        Ok(store)
     }
 
     pub fn db_path(&self) -> &Path {
         &self.db_path
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
-        self.conn
+    fn read_lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
+        self.read_conn
             .lock()
-            .map_err(|_| anyhow::anyhow!("store mutex poisoned — a prior operation panicked"))
+            .map_err(|_| anyhow::anyhow!("read mutex poisoned"))
+    }
+
+    fn write_lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
+        self.write_conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("write mutex poisoned"))
     }
 
     pub fn transaction<F, T>(&self, f: F) -> Result<T>
     where
         F: FnOnce() -> Result<T>,
     {
-        let conn = self.lock()?;
+        let conn = self.write_lock()?;
         conn.execute_batch("BEGIN TRANSACTION")?;
         drop(conn);
 
         match f() {
             Ok(val) => {
-                let conn = self.lock()?;
+                let conn = self.write_lock()?;
                 conn.execute_batch("COMMIT")?;
                 Ok(val)
             }
             Err(e) => {
-                if let Ok(conn) = self.lock() {
+                if let Ok(conn) = self.write_lock() {
                     let _ = conn.execute_batch("ROLLBACK");
                 }
                 Err(e)
@@ -67,7 +85,7 @@ impl Store {
     }
 
     pub fn ensure_repo(&self, path: &str, name: &str) -> Result<i64> {
-        let conn = self.lock()?;
+        let conn = self.write_lock()?;
         conn.execute(
             "INSERT OR IGNORE INTO repos (path, name) VALUES (?1, ?2)",
             params![path, name],
@@ -88,7 +106,7 @@ impl Store {
         language: &str,
         mtime_ns: i64,
     ) -> Result<i64> {
-        let conn = self.lock()?;
+        let conn = self.write_lock()?;
         conn.execute(
             "INSERT INTO files (repo_id, path, content_hash, language, mtime_ns)
              VALUES (?1, ?2, ?3, ?4, ?5)
@@ -107,7 +125,7 @@ impl Store {
     }
 
     pub fn get_file_hash(&self, repo_id: i64, path: &str) -> Result<Option<u64>> {
-        let conn = self.lock()?;
+        let conn = self.read_lock()?;
         let result = conn.query_row(
             "SELECT content_hash FROM files WHERE repo_id = ?1 AND path = ?2",
             params![repo_id, path],
@@ -124,7 +142,7 @@ impl Store {
     }
 
     pub fn delete_file_blocks(&self, file_id: i64) -> Result<()> {
-        let conn = self.lock()?;
+        let conn = self.write_lock()?;
         conn.execute(
             "DELETE FROM code_blocks WHERE file_id = ?1",
             params![file_id],
@@ -143,7 +161,7 @@ impl Store {
         signature: &str,
         parent_id: Option<i64>,
     ) -> Result<i64> {
-        let conn = self.lock()?;
+        let conn = self.write_lock()?;
         conn.execute(
             "INSERT INTO code_blocks (file_id, name, kind, start_line, end_line, content, signature, parent_id)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -162,7 +180,7 @@ impl Store {
     }
 
     pub fn search_fts(&self, query: &str, limit: usize) -> Result<Vec<CodeBlock>> {
-        let conn = self.lock()?;
+        let conn = self.read_lock()?;
         let mut stmt = conn.prepare(
             "SELECT cb.id, cb.file_id, cb.name, cb.kind, cb.start_line, cb.end_line,
                     cb.content, cb.signature, cb.parent_id, f.path, f.language
@@ -201,7 +219,7 @@ impl Store {
         name: &str,
         kind: Option<CodeBlockKind>,
     ) -> Result<Vec<CodeBlock>> {
-        let conn = self.lock()?;
+        let conn = self.read_lock()?;
         if let Some(k) = kind {
             let kind_filter = k.as_str();
             let mut stmt = conn.prepare(
@@ -233,7 +251,7 @@ impl Store {
     }
 
     pub fn get_block_by_id(&self, block_id: i64) -> Result<Option<CodeBlock>> {
-        let conn = self.lock()?;
+        let conn = self.read_lock()?;
         let result = conn.query_row(
             "SELECT cb.id, cb.file_id, cb.name, cb.kind, cb.start_line, cb.end_line,
                     cb.content, cb.signature, cb.parent_id, f.path, f.language
@@ -251,7 +269,7 @@ impl Store {
     }
 
     pub fn get_dependents(&self, block_id: i64) -> Result<Vec<(CodeBlock, String)>> {
-        let conn = self.lock()?;
+        let conn = self.read_lock()?;
         let mut stmt = conn.prepare(
             "SELECT cb.id, cb.file_id, cb.name, cb.kind, cb.start_line, cb.end_line,
                     cb.content, cb.signature, cb.parent_id, f.path, f.language, d.kind
@@ -270,7 +288,7 @@ impl Store {
     }
 
     pub fn get_dependencies(&self, block_id: i64) -> Result<Vec<(CodeBlock, String)>> {
-        let conn = self.lock()?;
+        let conn = self.read_lock()?;
         let mut stmt = conn.prepare(
             "SELECT cb.id, cb.file_id, cb.name, cb.kind, cb.start_line, cb.end_line,
                     cb.content, cb.signature, cb.parent_id, f.path, f.language, d.kind
@@ -295,7 +313,7 @@ impl Store {
         target_name: &str,
         kind: &str,
     ) -> Result<()> {
-        let conn = self.lock()?;
+        let conn = self.write_lock()?;
         conn.execute(
             "INSERT INTO dependencies (source_block_id, target_block_id, target_name, kind, resolved)
              VALUES (?1, ?2, ?3, ?4, 1)",
@@ -305,14 +323,14 @@ impl Store {
     }
 
     pub fn file_count(&self) -> Result<i64> {
-        let conn = self.lock()?;
+        let conn = self.read_lock()?;
         let count: i64 =
             conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))?;
         Ok(count)
     }
 
     pub fn block_count(&self) -> Result<i64> {
-        let conn = self.lock()?;
+        let conn = self.read_lock()?;
         let count: i64 =
             conn.query_row("SELECT COUNT(*) FROM code_blocks", [], |row| row.get(0))?;
         Ok(count)
@@ -323,7 +341,7 @@ impl Store {
             return Ok(0);
         }
 
-        let conn = self.lock()?;
+        let conn = self.write_lock()?;
         let placeholders: String = current_paths
             .iter()
             .enumerate()
@@ -363,6 +381,18 @@ impl Store {
             file_path: row.get(9)?,
             language: row.get(10)?,
         })
+    }
+}
+
+impl Drop for Store {
+    fn drop(&mut self) {
+        if self.is_temp {
+            let _ = std::fs::remove_file(&self.db_path);
+            let wal = self.db_path.with_extension("db-wal");
+            let shm = self.db_path.with_extension("db-shm");
+            let _ = std::fs::remove_file(wal);
+            let _ = std::fs::remove_file(shm);
+        }
     }
 }
 
@@ -544,6 +574,36 @@ mod tests {
         let deleted = f.store.delete_stale_files(f.repo_id, &current).unwrap();
         assert_eq!(deleted, 1);
         assert_eq!(f.store.file_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_read_write_separation() {
+        let store = Store::open_in_memory().unwrap();
+        let repo_id = store.ensure_repo("/test", "test").unwrap();
+        store
+            .upsert_file(repo_id, "a.ts", 1, "typescript", 0)
+            .unwrap();
+        store
+            .insert_code_block(
+                store
+                    .upsert_file(repo_id, "b.ts", 2, "typescript", 0)
+                    .unwrap(),
+                "hello",
+                CodeBlockKind::Function,
+                1,
+                5,
+                "function hello() {}",
+                "function hello()",
+                None,
+            )
+            .unwrap();
+
+        // Read while "write transaction" is conceptually happening
+        // This should not deadlock
+        let count = store.file_count().unwrap();
+        assert!(count >= 1);
+        let results = store.search_fts("hello", 10).unwrap();
+        assert_eq!(results.len(), 1);
     }
 
     #[test]
