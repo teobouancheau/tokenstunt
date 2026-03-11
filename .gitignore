@@ -16,3 +16,4 @@ model/
 *.swp
 *.swo
 *~
+.worktrees/
