@@ -1,0 +1,13 @@
+{
+  "name": "tokenstunt",
+  "version": "1.0.0",
+  "description": "Cut Claude Code's token usage by 95%. Smart code search that returns exact functions and classes instead of entire files.",
+  "author": {
+    "name": "Teo Bouancheau",
+    "url": "https://github.com/teobouancheau"
+  },
+  "repository": "https://github.com/teobouancheau/tokenstunt",
+  "homepage": "https://github.com/teobouancheau/tokenstunt",
+  "license": "MIT",
+  "keywords": ["code-search", "mcp", "ast", "semantic-search", "tree-sitter"]
+}

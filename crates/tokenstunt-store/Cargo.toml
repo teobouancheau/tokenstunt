@@ -1,0 +1,13 @@
+[package]
+name = "tokenstunt-store"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled", "modern_sqlite"] }
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+xxhash-rust = { version = "0.8", features = ["xxh3"] }

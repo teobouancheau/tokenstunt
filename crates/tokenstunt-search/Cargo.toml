@@ -1,0 +1,11 @@
+[package]
+name = "tokenstunt-search"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokenstunt-store = { path = "../tokenstunt-store" }
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true

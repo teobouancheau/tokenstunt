@@ -1,0 +1,19 @@
+[package]
+name = "tokenstunt-index"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokenstunt-store = { path = "../tokenstunt-store" }
+tokenstunt-parser = { path = "../tokenstunt-parser" }
+tokenstunt-search = { path = "../tokenstunt-search" }
+tokio.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+ignore = "0.4"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+[dev-dependencies]
+tempfile = "3"
