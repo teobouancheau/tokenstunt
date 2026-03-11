@@ -1,7 +1,7 @@
 use rusqlite::Connection;
 use anyhow::Result;
 
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 pub fn initialize(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -68,6 +68,15 @@ pub fn initialize(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_deps_target ON dependencies(target_block_id);
         CREATE INDEX IF NOT EXISTS idx_deps_target_name ON dependencies(target_name);
 
+        CREATE TABLE IF NOT EXISTS embeddings (
+            id INTEGER PRIMARY KEY,
+            block_id INTEGER NOT NULL UNIQUE REFERENCES code_blocks(id) ON DELETE CASCADE,
+            vector BLOB NOT NULL,
+            model TEXT NOT NULL,
+            computed_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_embeddings_block ON embeddings(block_id);
+
         CREATE TABLE IF NOT EXISTS overview_cache (
             scope TEXT NOT NULL,
             depth INTEGER NOT NULL,
@@ -126,6 +135,20 @@ pub fn initialize(conn: &Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_schema_v2_has_embeddings_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize(&conn).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='embeddings'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
 
     #[test]
     fn test_schema_version_mismatch() {
