@@ -84,6 +84,24 @@ impl Store {
         }
     }
 
+    pub fn write_transaction<F, T>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(&Connection) -> Result<T>,
+    {
+        let conn = self.write_lock()?;
+        conn.execute_batch("BEGIN TRANSACTION")?;
+        match f(&conn) {
+            Ok(val) => {
+                conn.execute_batch("COMMIT")?;
+                Ok(val)
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    }
+
     pub fn ensure_repo(&self, path: &str, name: &str) -> Result<i64> {
         let conn = self.write_lock()?;
         conn.execute(
@@ -604,6 +622,23 @@ mod tests {
         assert!(count >= 1);
         let results = store.search_fts("hello", 10).unwrap();
         assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_transaction_holds_lock() {
+        let store = Store::open_in_memory().unwrap();
+        let repo_id = store.ensure_repo("/test", "test").unwrap();
+
+        // Transaction should pass &Connection to closure
+        let result = store.write_transaction(|conn| {
+            conn.execute(
+                "INSERT INTO files (repo_id, path, content_hash, language, mtime_ns) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![repo_id, "direct.ts", 999i64, "typescript", 0i64],
+            )?;
+            Ok(())
+        });
+        assert!(result.is_ok());
+        assert_eq!(store.file_count().unwrap(), 1);
     }
 
     #[test]
