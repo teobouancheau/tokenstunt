@@ -61,29 +61,6 @@ impl Store {
             .map_err(|_| anyhow::anyhow!("write mutex poisoned"))
     }
 
-    pub fn transaction<F, T>(&self, f: F) -> Result<T>
-    where
-        F: FnOnce() -> Result<T>,
-    {
-        let conn = self.write_lock()?;
-        conn.execute_batch("BEGIN TRANSACTION")?;
-        drop(conn);
-
-        match f() {
-            Ok(val) => {
-                let conn = self.write_lock()?;
-                conn.execute_batch("COMMIT")?;
-                Ok(val)
-            }
-            Err(e) => {
-                if let Ok(conn) = self.write_lock() {
-                    let _ = conn.execute_batch("ROLLBACK");
-                }
-                Err(e)
-            }
-        }
-    }
-
     pub fn write_transaction<F, T>(&self, f: F) -> Result<T>
     where
         F: FnOnce(&Connection) -> Result<T>,
@@ -107,7 +84,7 @@ impl Store {
         self.ensure_repo_with_conn(&conn, path, name)
     }
 
-    pub(crate) fn ensure_repo_with_conn(
+    pub fn ensure_repo_with_conn(
         &self,
         conn: &Connection,
         path: &str,
@@ -137,7 +114,7 @@ impl Store {
         self.upsert_file_with_conn(&conn, repo_id, path, content_hash, language, mtime_ns)
     }
 
-    pub(crate) fn upsert_file_with_conn(
+    pub fn upsert_file_with_conn(
         &self,
         conn: &Connection,
         repo_id: i64,
@@ -168,7 +145,7 @@ impl Store {
         self.get_file_hash_with_conn(&conn, repo_id, path)
     }
 
-    pub(crate) fn get_file_hash_with_conn(
+    pub fn get_file_hash_with_conn(
         &self,
         conn: &Connection,
         repo_id: i64,
@@ -194,7 +171,7 @@ impl Store {
         self.delete_file_blocks_with_conn(&conn, file_id)
     }
 
-    pub(crate) fn delete_file_blocks_with_conn(
+    pub fn delete_file_blocks_with_conn(
         &self,
         conn: &Connection,
         file_id: i64,
@@ -223,7 +200,7 @@ impl Store {
         )
     }
 
-    pub(crate) fn insert_code_block_with_conn(
+    pub fn insert_code_block_with_conn(
         &self,
         conn: &Connection,
         file_id: i64,
@@ -296,7 +273,7 @@ impl Store {
         self.lookup_symbol_with_conn(&conn, name, kind)
     }
 
-    pub(crate) fn lookup_symbol_with_conn(
+    pub fn lookup_symbol_with_conn(
         &self,
         conn: &Connection,
         name: &str,
@@ -399,7 +376,7 @@ impl Store {
         self.insert_dependency_with_conn(&conn, source_block_id, target_block_id, target_name, kind)
     }
 
-    pub(crate) fn insert_dependency_with_conn(
+    pub fn insert_dependency_with_conn(
         &self,
         conn: &Connection,
         source_block_id: i64,
@@ -434,7 +411,7 @@ impl Store {
         self.delete_stale_files_with_conn(&conn, repo_id, current_paths)
     }
 
-    pub(crate) fn delete_stale_files_with_conn(
+    pub fn delete_stale_files_with_conn(
         &self,
         conn: &Connection,
         repo_id: i64,
@@ -648,16 +625,16 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let repo_id = store.ensure_repo("/test", "test").unwrap();
 
-        let result = store.transaction(|| {
-            store.upsert_file(repo_id, "a.ts", 1, "typescript", 0)?;
-            store.upsert_file(repo_id, "b.ts", 2, "typescript", 0)?;
+        let result = store.write_transaction(|conn| {
+            store.upsert_file_with_conn(conn, repo_id, "a.ts", 1, "typescript", 0)?;
+            store.upsert_file_with_conn(conn, repo_id, "b.ts", 2, "typescript", 0)?;
             Ok(())
         });
         assert!(result.is_ok());
         assert_eq!(store.file_count().unwrap(), 2);
 
-        let result: Result<()> = store.transaction(|| {
-            store.upsert_file(repo_id, "c.ts", 3, "typescript", 0)?;
+        let result: Result<()> = store.write_transaction(|conn| {
+            store.upsert_file_with_conn(conn, repo_id, "c.ts", 3, "typescript", 0)?;
             anyhow::bail!("simulated failure");
         });
         assert!(result.is_err());

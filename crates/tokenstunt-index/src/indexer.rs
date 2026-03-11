@@ -5,7 +5,7 @@ use tracing::{info, warn};
 use xxhash_rust::xxh3::xxh3_64;
 
 use tokenstunt_parser::{LanguageRegistry, ParsedSymbol, SymbolExtractor};
-use tokenstunt_store::{CodeBlockKind, Store};
+use tokenstunt_store::{CodeBlockKind, Connection, Store};
 
 use crate::walker;
 
@@ -41,7 +41,7 @@ impl Indexer {
 
         let registry = LanguageRegistry::new()?;
 
-        let stats = self.store.transaction(|| {
+        let stats = self.store.write_transaction(|conn| {
             let mut stats = IndexStats::default();
             let mut indexed_paths: Vec<String> = Vec::with_capacity(entries.len());
 
@@ -66,7 +66,7 @@ impl Indexer {
 
                 let content_hash = xxh3_64(source.as_bytes());
 
-                if let Ok(Some(existing_hash)) = self.store.get_file_hash(repo_id, &rel_path) {
+                if let Ok(Some(existing_hash)) = self.store.get_file_hash_with_conn(conn, repo_id, &rel_path) {
                     if existing_hash == content_hash {
                         stats.skipped += 1;
                         continue;
@@ -84,7 +84,8 @@ impl Indexer {
                     .map(|d| d.as_nanos() as i64)
                     .unwrap_or(0);
 
-                let file_id = self.store.upsert_file(
+                let file_id = self.store.upsert_file_with_conn(
+                    conn,
                     repo_id,
                     &rel_path,
                     content_hash,
@@ -92,7 +93,7 @@ impl Indexer {
                     mtime,
                 )?;
 
-                self.store.delete_file_blocks(file_id)?;
+                self.store.delete_file_blocks_with_conn(conn, file_id)?;
 
                 let symbols = match self.extractor.extract(&source, entry.language) {
                     Ok(s) => s,
@@ -104,14 +105,14 @@ impl Indexer {
                 };
 
                 for symbol in &symbols {
-                    self.insert_symbol(file_id, symbol, None)?;
+                    self.insert_symbol_with_conn(conn, file_id, symbol, None)?;
                     stats.blocks += count_symbols(symbol);
                 }
 
                 stats.files += 1;
             }
 
-            let deleted = self.store.delete_stale_files(repo_id, &indexed_paths)?;
+            let deleted = self.store.delete_stale_files_with_conn(conn, repo_id, &indexed_paths)?;
             stats.deleted_files = deleted;
 
             Ok(stats)
@@ -129,15 +130,17 @@ impl Indexer {
         Ok(stats)
     }
 
-    fn insert_symbol(
+    fn insert_symbol_with_conn(
         &self,
+        conn: &Connection,
         file_id: i64,
         symbol: &ParsedSymbol,
         parent_id: Option<i64>,
     ) -> Result<i64> {
         let kind = CodeBlockKind::from_str(symbol.kind).unwrap_or(CodeBlockKind::Function);
 
-        let block_id = self.store.insert_code_block(
+        let block_id = self.store.insert_code_block_with_conn(
+            conn,
             file_id,
             &symbol.name,
             kind,
@@ -149,7 +152,7 @@ impl Indexer {
         )?;
 
         for child in &symbol.children {
-            self.insert_symbol(file_id, child, Some(block_id))?;
+            self.insert_symbol_with_conn(conn, file_id, child, Some(block_id))?;
         }
 
         Ok(block_id)
