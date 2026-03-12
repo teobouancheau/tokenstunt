@@ -70,6 +70,7 @@ pub struct LanguageRegistry {
     ts_python: tree_sitter::Language,
     ts_rust: tree_sitter::Language,
     ts_go: tree_sitter::Language,
+    ts_java: tree_sitter::Language,
 }
 
 impl LanguageRegistry {
@@ -80,6 +81,7 @@ impl LanguageRegistry {
             ts_python: tree_sitter_python::LANGUAGE.into(),
             ts_rust: tree_sitter_rust::LANGUAGE.into(),
             ts_go: tree_sitter_go::LANGUAGE.into(),
+            ts_java: tree_sitter_java::LANGUAGE.into(),
         })
     }
 
@@ -90,6 +92,7 @@ impl LanguageRegistry {
             Language::Python => Ok(self.ts_python.clone()),
             Language::Rust => Ok(self.ts_rust.clone()),
             Language::Go => Ok(self.ts_go.clone()),
+            Language::Java => Ok(self.ts_java.clone()),
             other => bail!("language {:?} not yet supported", other),
         }
     }
@@ -103,6 +106,7 @@ impl LanguageRegistry {
                 | Language::Python
                 | Language::Rust
                 | Language::Go
+                | Language::Java
         )
     }
 }
@@ -187,6 +191,7 @@ mod tests {
         assert!(registry.get_ts_language(Language::Python).is_ok());
         assert!(registry.get_ts_language(Language::Rust).is_ok());
         assert!(registry.get_ts_language(Language::Go).is_ok());
+        assert!(registry.get_ts_language(Language::Java).is_ok());
     }
 
     #[test]
@@ -198,6 +203,6 @@ mod tests {
         assert!(registry.is_supported(Language::Python));
         assert!(registry.is_supported(Language::Rust));
         assert!(registry.is_supported(Language::Go));
-        assert!(!registry.is_supported(Language::Java));
+        assert!(registry.is_supported(Language::Java));
     }
 }

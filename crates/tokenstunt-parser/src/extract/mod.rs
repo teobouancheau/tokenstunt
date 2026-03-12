@@ -1,5 +1,6 @@
 mod go;
 mod helpers;
+mod java;
 mod python;
 mod rust_lang;
 mod typescript;
@@ -9,6 +10,7 @@ use tree_sitter::{Node, Parser};
 
 use crate::languages::{Language, LanguageRegistry};
 use go::GoExtractor;
+use java::JavaExtractor;
 use python::PythonExtractor;
 use rust_lang::RustExtractor;
 use typescript::TypeScriptExtractor;
@@ -90,6 +92,13 @@ impl SymbolExtractor {
             }
             Language::Go => {
                 let extractor = GoExtractor;
+                (
+                    extractor.extract_symbols(root, source_bytes),
+                    extractor.extract_references(root, source_bytes),
+                )
+            }
+            Language::Java => {
+                let extractor = JavaExtractor;
                 (
                     extractor.extract_symbols(root, source_bytes),
                     extractor.extract_references(root, source_bytes),
@@ -429,6 +438,75 @@ type Reader interface {
             method_names.contains(&"Close"),
             "missing Close, got: {method_names:?}"
         );
+    }
+
+    #[test]
+    fn test_java_class_method_interface_enum() {
+        let src = r#"
+public class UserService {
+    private static final int MAX_USERS = 100;
+
+    public User getUser(String id) {
+        return users.get(id);
+    }
+
+    public void deleteUser(String id) {
+        users.remove(id);
+    }
+}
+
+public interface Repository<T> {
+    T findById(String id);
+    void save(T entity);
+}
+
+public enum Status {
+    ACTIVE,
+    INACTIVE,
+    DELETED
+}
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Java).unwrap();
+        let names: Vec<&str> = result.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(
+            names.contains(&"UserService"),
+            "missing UserService, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"Repository"),
+            "missing Repository, got: {names:?}"
+        );
+        assert!(names.contains(&"Status"), "missing Status, got: {names:?}");
+        assert!(
+            names.contains(&"MAX_USERS"),
+            "missing MAX_USERS, got: {names:?}"
+        );
+
+        let class = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "UserService")
+            .unwrap();
+        assert_eq!(class.kind, "class");
+        assert_eq!(class.children.len(), 2);
+        assert_eq!(class.children[0].name, "getUser");
+        assert_eq!(class.children[1].name, "deleteUser");
+
+        let iface = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "Repository")
+            .unwrap();
+        assert_eq!(iface.kind, "interface");
+        assert_eq!(iface.children.len(), 2);
+
+        let enm = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "Status")
+            .unwrap();
+        assert_eq!(enm.kind, "enum");
     }
 
     #[test]
