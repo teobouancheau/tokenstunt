@@ -1,5 +1,5 @@
 ---
-name: symbol
+name: tokenstunt-symbol
 description: Exact symbol lookup — full definition with file path and lines
 argument-hint: <name>
 ---

@@ -1,5 +1,5 @@
 ---
-name: search
+name: tokenstunt-search
 description: Semantic code search by concept or keyword
 argument-hint: <query>
 ---

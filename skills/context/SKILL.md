@@ -1,5 +1,5 @@
 ---
-name: context
+name: tokenstunt-context
 description: Symbol dependency graph — what it calls and what calls it
 argument-hint: <symbol>
 ---
