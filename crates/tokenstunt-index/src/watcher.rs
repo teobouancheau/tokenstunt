@@ -45,11 +45,11 @@ impl FileWatcher {
 
         let mut watcher =
             notify::recommended_watcher(move |res: std::result::Result<Event, notify::Error>| {
-                if let Ok(event) = res {
-                    if let Ok(mut set) = pending.lock() {
-                        for path in event.paths {
-                            set.insert(path);
-                        }
+                if let Ok(event) = res
+                    && let Ok(mut set) = pending.lock()
+                {
+                    for path in event.paths {
+                        set.insert(path);
                     }
                 }
             })?;
