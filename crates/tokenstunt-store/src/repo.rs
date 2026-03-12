@@ -368,7 +368,7 @@ impl Store {
     pub fn insert_dependency(
         &self,
         source_block_id: i64,
-        target_block_id: i64,
+        target_block_id: Option<i64>,
         target_name: &str,
         kind: &str,
     ) -> Result<()> {
@@ -380,14 +380,14 @@ impl Store {
         &self,
         conn: &Connection,
         source_block_id: i64,
-        target_block_id: i64,
+        target_block_id: Option<i64>,
         target_name: &str,
         kind: &str,
     ) -> Result<()> {
         conn.execute(
-            "INSERT INTO dependencies (source_block_id, target_block_id, target_name, kind, resolved)
-             VALUES (?1, ?2, ?3, ?4, 1)",
-            params![source_block_id, target_block_id, target_name, kind],
+            "INSERT OR REPLACE INTO dependencies (source_block_id, target_block_id, target_name, kind, resolved)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![source_block_id, target_block_id, target_name, kind, target_block_id.is_some() as i32],
         )?;
         Ok(())
     }
@@ -595,7 +595,7 @@ mod tests {
             .unwrap();
 
         f.store
-            .insert_dependency(f.block_id, target_id, "helper", "call")
+            .insert_dependency(f.block_id, Some(target_id), "helper", "call")
             .unwrap();
 
         let deps = f.store.get_dependencies(f.block_id).unwrap();
@@ -606,6 +606,16 @@ mod tests {
         let dependents = f.store.get_dependents(target_id).unwrap();
         assert_eq!(dependents.len(), 1);
         assert_eq!(dependents[0].0.name, "greet");
+    }
+
+    #[test]
+    fn test_unresolved_dependency() {
+        let f = setup();
+        f.store
+            .insert_dependency(f.block_id, None, "externalFn", "call")
+            .unwrap();
+        let deps = f.store.get_dependencies(f.block_id).unwrap();
+        assert!(deps.is_empty());
     }
 
     #[test]

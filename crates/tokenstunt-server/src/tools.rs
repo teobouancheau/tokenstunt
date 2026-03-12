@@ -268,7 +268,7 @@ mod tests {
 
         // authenticateUser --calls--> validateToken
         store
-            .insert_dependency(auth_id, validate_id, "validateToken", "call")
+            .insert_dependency(auth_id, Some(validate_id), "validateToken", "call")
             .unwrap();
 
         let indexer = Arc::new(tokenstunt_index::Indexer::new(store).unwrap());
