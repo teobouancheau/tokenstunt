@@ -8,6 +8,7 @@ permissions:
 
 jobs:
   version:
+    name: Calculate Version
     runs-on: ubuntu-latest
     if: github.actor == 'teobouancheau'
     outputs:
@@ -39,6 +40,7 @@ jobs:
           echo "name=${DISPLAY_DATE}" >> "$GITHUB_OUTPUT"
 
   build:
+    name: Build (${{ matrix.target }})
     needs: version
     strategy:
       matrix:
@@ -71,16 +73,16 @@ jobs:
       - name: Set version
         run: sed -i.bak 's/^version = ".*"/version = "${{ needs.version.outputs.version }}"/' Cargo.toml && rm -f Cargo.toml.bak
 
-      - name: Test
+      - name: Run tests
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: cargo test
 
-      - name: Build
+      - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
-      - name: Package
+      - name: Package binary
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ../../../tokenstunt-${{ matrix.target }}.tar.gz tokenstunt
@@ -92,6 +94,7 @@ jobs:
           path: tokenstunt-${{ matrix.target }}.tar.gz
 
   release:
+    name: Publish Release
     needs: [version, build]
     runs-on: ubuntu-latest
     environment: release
@@ -101,7 +104,7 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create release
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.version.outputs.tag }}
