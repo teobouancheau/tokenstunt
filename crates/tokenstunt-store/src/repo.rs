@@ -510,6 +510,151 @@ impl Store {
         Ok(deleted as u64)
     }
 
+    pub fn get_language_stats(&self) -> Result<Vec<(String, i64)>> {
+        let conn = self.read_lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT language, COUNT(*) as cnt FROM files GROUP BY language ORDER BY cnt DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    pub fn get_directory_stats(&self, scope: Option<&str>) -> Result<Vec<(String, i64, i64)>> {
+        let conn = self.read_lock()?;
+        let query = match scope {
+            Some(prefix) => {
+                let mut stmt = conn.prepare(
+                    "SELECT
+                        CASE
+                            WHEN INSTR(SUBSTR(f.path, LENGTH(?1) + 1), '/') > 0
+                            THEN SUBSTR(f.path, 1, LENGTH(?1) + INSTR(SUBSTR(f.path, LENGTH(?1) + 1), '/') - 1)
+                            ELSE f.path
+                        END as dir,
+                        COUNT(DISTINCT f.id) as file_count,
+                        COUNT(cb.id) as block_count
+                     FROM files f
+                     LEFT JOIN code_blocks cb ON cb.file_id = f.id
+                     WHERE f.path LIKE ?2
+                     GROUP BY dir
+                     ORDER BY file_count DESC",
+                )?;
+                let prefix_pattern = format!("{prefix}%");
+                let rows = stmt
+                    .query_map(params![prefix, prefix_pattern], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, i64>(2)?,
+                        ))
+                    })?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                return Ok(rows);
+            }
+            None => {
+                "SELECT
+                    CASE
+                        WHEN INSTR(path, '/') > 0
+                        THEN SUBSTR(path, 1, INSTR(path, '/') - 1)
+                        ELSE path
+                    END as dir,
+                    COUNT(DISTINCT f.id) as file_count,
+                    COUNT(cb.id) as block_count
+                 FROM files f
+                 LEFT JOIN code_blocks cb ON cb.file_id = f.id
+                 GROUP BY dir
+                 ORDER BY file_count DESC"
+            }
+        };
+        let mut stmt = conn.prepare(query)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn get_exported_symbols(&self, scope: Option<&str>) -> Result<Vec<CodeBlock>> {
+        let conn = self.read_lock()?;
+        match scope {
+            Some(prefix) => {
+                let prefix_pattern = format!("{prefix}%");
+                let mut stmt = conn.prepare(
+                    "SELECT cb.id, cb.file_id, cb.name, cb.kind, cb.start_line, cb.end_line,
+                            cb.content, cb.signature, cb.parent_id, f.path, f.language
+                     FROM code_blocks cb
+                     JOIN files f ON f.id = cb.file_id
+                     WHERE cb.parent_id IS NULL AND f.path LIKE ?1
+                     ORDER BY f.path, cb.start_line
+                     LIMIT 50",
+                )?;
+                let rows = stmt
+                    .query_map(params![prefix_pattern], Self::map_code_block)?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                Ok(rows)
+            }
+            None => {
+                let mut stmt = conn.prepare(
+                    "SELECT cb.id, cb.file_id, cb.name, cb.kind, cb.start_line, cb.end_line,
+                            cb.content, cb.signature, cb.parent_id, f.path, f.language
+                     FROM code_blocks cb
+                     JOIN files f ON f.id = cb.file_id
+                     WHERE cb.parent_id IS NULL
+                     ORDER BY f.path, cb.start_line
+                     LIMIT 50",
+                )?;
+                let rows = stmt
+                    .query_map([], Self::map_code_block)?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                Ok(rows)
+            }
+        }
+    }
+
+    pub fn get_overview_cache(&self, scope: &str, depth: i32) -> Result<Option<String>> {
+        let conn = self.read_lock()?;
+        let result = conn.query_row(
+            "SELECT content FROM overview_cache WHERE scope = ?1 AND depth = ?2",
+            params![scope, depth],
+            |row| row.get::<_, String>(0),
+        );
+        match result {
+            Ok(content) => Ok(Some(content)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn set_overview_cache(&self, scope: &str, depth: i32, content: &str) -> Result<()> {
+        let conn = self.write_lock()?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        conn.execute(
+            "INSERT OR REPLACE INTO overview_cache (scope, depth, content, computed_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![scope, depth, content, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn invalidate_overview_cache(&self, scope: &str) -> Result<()> {
+        let conn = self.write_lock()?;
+        conn.execute(
+            "DELETE FROM overview_cache WHERE scope = ?1",
+            params![scope],
+        )?;
+        Ok(())
+    }
+
     fn map_code_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<CodeBlock> {
         let kind_str: String = row.get(3)?;
         Ok(CodeBlock {
@@ -856,6 +1001,90 @@ mod tests {
             .unwrap();
         let unresolved = f.store.get_unresolved_dependencies().unwrap();
         assert!(unresolved.is_empty());
+    }
+
+    #[test]
+    fn test_language_stats() {
+        let store = Store::open_in_memory().unwrap();
+        let repo_id = store.ensure_repo("/test", "test").unwrap();
+        store.upsert_file(repo_id, "a.ts", 1, "typescript", 0).unwrap();
+        store.upsert_file(repo_id, "b.ts", 2, "typescript", 0).unwrap();
+        store.upsert_file(repo_id, "c.py", 3, "python", 0).unwrap();
+
+        let stats = store.get_language_stats().unwrap();
+        assert!(stats.iter().any(|(lang, count)| lang == "typescript" && *count == 2));
+        assert!(stats.iter().any(|(lang, count)| lang == "python" && *count == 1));
+    }
+
+    #[test]
+    fn test_directory_stats() {
+        let store = Store::open_in_memory().unwrap();
+        let repo_id = store.ensure_repo("/test", "test").unwrap();
+        let f1 = store.upsert_file(repo_id, "src/main.ts", 1, "typescript", 0).unwrap();
+        let f2 = store.upsert_file(repo_id, "src/lib.ts", 2, "typescript", 0).unwrap();
+        store.upsert_file(repo_id, "tests/test.ts", 3, "typescript", 0).unwrap();
+        store
+            .insert_code_block(f1, "main", CodeBlockKind::Function, 1, 5, "fn main() {}", "fn main()", None)
+            .unwrap();
+        store
+            .insert_code_block(f2, "lib", CodeBlockKind::Function, 1, 5, "fn lib() {}", "fn lib()", None)
+            .unwrap();
+
+        let stats = store.get_directory_stats(None).unwrap();
+        assert!(stats.iter().any(|(dir, fc, _)| dir == "src" && *fc == 2));
+        assert!(stats.iter().any(|(dir, fc, _)| dir == "tests" && *fc == 1));
+
+        let scoped = store.get_directory_stats(Some("src/")).unwrap();
+        assert!(!scoped.is_empty());
+    }
+
+    #[test]
+    fn test_exported_symbols() {
+        let store = Store::open_in_memory().unwrap();
+        let repo_id = store.ensure_repo("/test", "test").unwrap();
+        let file_id = store.upsert_file(repo_id, "src/main.ts", 1, "typescript", 0).unwrap();
+        let parent_id = store
+            .insert_code_block(
+                file_id, "MyClass", CodeBlockKind::Class, 1, 20,
+                "class MyClass {}", "class MyClass", None,
+            )
+            .unwrap();
+        store
+            .insert_code_block(
+                file_id, "myMethod", CodeBlockKind::Method, 5, 10,
+                "myMethod() {}", "myMethod()", Some(parent_id),
+            )
+            .unwrap();
+
+        let symbols = store.get_exported_symbols(None).unwrap();
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "MyClass");
+
+        let scoped = store.get_exported_symbols(Some("src/")).unwrap();
+        assert_eq!(scoped.len(), 1);
+
+        let empty = store.get_exported_symbols(Some("other/")).unwrap();
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn test_overview_cache() {
+        let store = Store::open_in_memory().unwrap();
+
+        assert!(store.get_overview_cache("/test", 1).unwrap().is_none());
+
+        store.set_overview_cache("/test", 1, "cached overview content").unwrap();
+        let cached = store.get_overview_cache("/test", 1).unwrap();
+        assert_eq!(cached.as_deref(), Some("cached overview content"));
+
+        store.set_overview_cache("/test", 1, "updated content").unwrap();
+        let updated = store.get_overview_cache("/test", 1).unwrap();
+        assert_eq!(updated.as_deref(), Some("updated content"));
+
+        store.set_overview_cache("/test", 2, "depth 2 content").unwrap();
+        store.invalidate_overview_cache("/test").unwrap();
+        assert!(store.get_overview_cache("/test", 1).unwrap().is_none());
+        assert!(store.get_overview_cache("/test", 2).unwrap().is_none());
     }
 
     #[test]
