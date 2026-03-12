@@ -5,6 +5,7 @@
 *.db-shm
 model/
 .DS_Store
+# Claude Code local state
 .claude/
 .env*
 *.pem
@@ -17,3 +18,8 @@ model/
 *.swo
 *~
 .worktrees/
+.mcp.json
+# Plugin binary (downloaded at install time)
+.claude-plugin/bin/
+# Internal docs
+docs/superpowers/

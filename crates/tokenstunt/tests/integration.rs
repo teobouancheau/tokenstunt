@@ -222,8 +222,5 @@ type Server struct {
         .unwrap();
     let recon_stats = indexer.reconcile(dir.path(), repo_id).unwrap();
     assert_eq!(recon_stats.updated, 0, "no files should need updating");
-    assert!(
-        recon_stats.unchanged >= 5,
-        "all files should be unchanged"
-    );
+    assert!(recon_stats.unchanged >= 5, "all files should be unchanged");
 }

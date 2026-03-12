@@ -1,4 +1,4 @@
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::EmbeddingProvider;
@@ -77,7 +77,10 @@ impl EmbeddingProvider for OllamaProvider {
             .context("failed to reach Ollama server")?;
 
         if !response.status().is_success() {
-            anyhow::bail!("Ollama health check failed with status {}", response.status());
+            anyhow::bail!(
+                "Ollama health check failed with status {}",
+                response.status()
+            );
         }
 
         Ok(())

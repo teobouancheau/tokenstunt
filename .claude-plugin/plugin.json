@@ -1,7 +1,7 @@
 {
   "name": "tokenstunt",
   "version": "1.0.0",
-  "description": "Cut Claude Code's token usage by 95%. Smart code search that returns exact functions and classes instead of entire files.",
+  "description": "AST-level semantic code search. Returns exact functions and classes instead of entire files, cutting token usage by 95%.",
   "author": {
     "name": "Teo Bouancheau",
     "url": "https://github.com/teobouancheau"
@@ -9,5 +9,23 @@
   "repository": "https://github.com/teobouancheau/tokenstunt",
   "homepage": "https://github.com/teobouancheau/tokenstunt",
   "license": "MIT",
-  "keywords": ["code-search", "mcp", "ast", "semantic-search", "tree-sitter"]
+  "keywords": ["code-search", "mcp", "ast", "semantic-search", "tree-sitter"],
+  "mcpServers": {
+    "tokenstunt": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/tokenstunt",
+      "args": ["serve"]
+    }
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/install.sh"
+          }
+        ]
+      }
+    ]
+  }
 }

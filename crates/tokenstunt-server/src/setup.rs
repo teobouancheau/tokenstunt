@@ -20,7 +20,9 @@ pub fn build_setup_report(store: &Store, root: &Path, has_embeddings: bool) -> R
     ));
 
     if file_count == 0 {
-        out.push_str("\n> **Warning**: No files indexed. Run `tokenstunt index` or restart the server.\n");
+        out.push_str(
+            "\n> **Warning**: No files indexed. Run `tokenstunt index` or restart the server.\n",
+        );
     }
 
     let lang_stats = store.get_language_stats()?;

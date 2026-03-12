@@ -19,7 +19,11 @@ pub struct ImpactResult {
     pub affected_files: Vec<String>,
 }
 
-pub fn walk_dependents(store: &Store, source: &str, max_depth: Option<u32>) -> Result<ImpactResult> {
+pub fn walk_dependents(
+    store: &Store,
+    source: &str,
+    max_depth: Option<u32>,
+) -> Result<ImpactResult> {
     let max_depth = max_depth.unwrap_or(3).min(MAX_DEPTH_CAP);
 
     let symbols = store.lookup_symbol(source, None)?;
@@ -97,7 +101,11 @@ pub fn format_impact(result: &ImpactResult) -> String {
 
     for depth in 1..=max_depth {
         let label = if depth == 1 { "Direct" } else { "Transitive" };
-        let nodes: Vec<&ImpactNode> = result.dependents.iter().filter(|d| d.depth == depth).collect();
+        let nodes: Vec<&ImpactNode> = result
+            .dependents
+            .iter()
+            .filter(|d| d.depth == depth)
+            .collect();
         if nodes.is_empty() {
             continue;
         }
@@ -142,14 +150,26 @@ mod tests {
 
         let block_a = store
             .insert_code_block(
-                file_id, "funcA", CodeBlockKind::Function, 1, 5,
-                "function funcA() {}", "function funcA()", None,
+                file_id,
+                "funcA",
+                CodeBlockKind::Function,
+                1,
+                5,
+                "function funcA() {}",
+                "function funcA()",
+                None,
             )
             .unwrap();
         let block_b = store
             .insert_code_block(
-                file_id, "funcB", CodeBlockKind::Function, 10, 15,
-                "function funcB() { funcA(); }", "function funcB()", None,
+                file_id,
+                "funcB",
+                CodeBlockKind::Function,
+                10,
+                15,
+                "function funcB() { funcA(); }",
+                "function funcB()",
+                None,
             )
             .unwrap();
         let file_id2 = store
@@ -157,16 +177,31 @@ mod tests {
             .unwrap();
         let block_c = store
             .insert_code_block(
-                file_id2, "funcC", CodeBlockKind::Function, 1, 5,
-                "function funcC() { funcB(); }", "function funcC()", None,
+                file_id2,
+                "funcC",
+                CodeBlockKind::Function,
+                1,
+                5,
+                "function funcC() { funcB(); }",
+                "function funcC()",
+                None,
             )
             .unwrap();
 
         // B depends on A, C depends on B
-        store.insert_dependency(block_b, Some(block_a), "funcA", "call").unwrap();
-        store.insert_dependency(block_c, Some(block_b), "funcB", "call").unwrap();
+        store
+            .insert_dependency(block_b, Some(block_a), "funcA", "call")
+            .unwrap();
+        store
+            .insert_dependency(block_c, Some(block_b), "funcB", "call")
+            .unwrap();
 
-        TestFixture { store, block_a, block_b, block_c }
+        TestFixture {
+            store,
+            block_a,
+            block_b,
+            block_c,
+        }
     }
 
     #[test]
@@ -192,8 +227,18 @@ mod tests {
         let f = setup();
         let result = walk_dependents(&f.store, "funcA", None).unwrap();
         assert_eq!(result.dependents.len(), 2);
-        assert!(result.dependents.iter().any(|d| d.name == "funcB" && d.depth == 1));
-        assert!(result.dependents.iter().any(|d| d.name == "funcC" && d.depth == 2));
+        assert!(
+            result
+                .dependents
+                .iter()
+                .any(|d| d.name == "funcB" && d.depth == 1)
+        );
+        assert!(
+            result
+                .dependents
+                .iter()
+                .any(|d| d.name == "funcC" && d.depth == 2)
+        );
         assert_eq!(result.affected_files.len(), 2);
     }
 
@@ -201,18 +246,42 @@ mod tests {
     fn test_cycle_detection() {
         let store = Store::open_in_memory().unwrap();
         let repo_id = store.ensure_repo("/test", "test").unwrap();
-        let file_id = store.upsert_file(repo_id, "src/cycle.ts", 111, "typescript", 0).unwrap();
+        let file_id = store
+            .upsert_file(repo_id, "src/cycle.ts", 111, "typescript", 0)
+            .unwrap();
 
         let a = store
-            .insert_code_block(file_id, "cycleA", CodeBlockKind::Function, 1, 5, "fn a() {}", "fn a()", None)
+            .insert_code_block(
+                file_id,
+                "cycleA",
+                CodeBlockKind::Function,
+                1,
+                5,
+                "fn a() {}",
+                "fn a()",
+                None,
+            )
             .unwrap();
         let b = store
-            .insert_code_block(file_id, "cycleB", CodeBlockKind::Function, 10, 15, "fn b() {}", "fn b()", None)
+            .insert_code_block(
+                file_id,
+                "cycleB",
+                CodeBlockKind::Function,
+                10,
+                15,
+                "fn b() {}",
+                "fn b()",
+                None,
+            )
             .unwrap();
 
         // A -> B -> A (cycle)
-        store.insert_dependency(b, Some(a), "cycleA", "call").unwrap();
-        store.insert_dependency(a, Some(b), "cycleB", "call").unwrap();
+        store
+            .insert_dependency(b, Some(a), "cycleA", "call")
+            .unwrap();
+        store
+            .insert_dependency(a, Some(b), "cycleB", "call")
+            .unwrap();
 
         let result = walk_dependents(&store, "cycleA", None).unwrap();
         // Should not loop forever; cycleB depends on cycleA, cycleA depends on cycleB

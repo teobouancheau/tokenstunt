@@ -10,7 +10,11 @@ use tokenstunt_embeddings::EmbeddingProvider;
 use tracing::info;
 
 #[derive(Parser)]
-#[command(name = "tokenstunt", version, about = "AST-level semantic code search MCP server")]
+#[command(
+    name = "tokenstunt",
+    version,
+    about = "AST-level semantic code search MCP server"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -133,11 +137,16 @@ async fn main() -> Result<()> {
                 "reconciliation complete"
             );
 
-            let _watcher = tokenstunt_index::FileWatcher::start(Arc::clone(&indexer), root.clone())?;
+            let _watcher =
+                tokenstunt_index::FileWatcher::start(Arc::clone(&indexer), root.clone())?;
             info!("file watcher started");
 
             let has_embeddings = indexer.embedder().is_some();
-            let server = tokenstunt_server::TokenStuntServer::new(Arc::clone(&indexer), root, has_embeddings);
+            let server = tokenstunt_server::TokenStuntServer::new(
+                Arc::clone(&indexer),
+                root,
+                has_embeddings,
+            );
 
             info!("starting MCP server on stdio");
             let transport = rmcp::transport::io::stdio();
@@ -168,6 +177,7 @@ async fn main() -> Result<()> {
 
             info!(root = %root.display(), "indexing");
             let stats = indexer.index_directory(&root)?;
+            indexer.await_embeddings().await;
 
             println!(
                 "Indexed {} files, {} code blocks ({} skipped, {} errors)",

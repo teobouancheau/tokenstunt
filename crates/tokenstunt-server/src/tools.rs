@@ -4,7 +4,7 @@ use std::sync::Arc;
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
-use rmcp::{schemars, tool, tool_handler, tool_router, ErrorData as McpError};
+use rmcp::{ErrorData as McpError, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
 use tokenstunt_index::Indexer;
 use tokenstunt_search::{SearchEngine, SearchQuery};
@@ -243,12 +243,9 @@ impl TokenStuntServer {
         &self,
         _params: Parameters<TsSetupParams>,
     ) -> Result<CallToolResult, McpError> {
-        let report = crate::setup::build_setup_report(
-            self.indexer.store(),
-            &self.root,
-            self.has_embeddings,
-        )
-        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let report =
+            crate::setup::build_setup_report(self.indexer.store(), &self.root, self.has_embeddings)
+                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         Ok(CallToolResult::success(vec![Content::text(report)]))
     }
@@ -262,12 +259,8 @@ impl TokenStuntServer {
         params: Parameters<TsImpactParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
-        let result = crate::impact::walk_dependents(
-            self.indexer.store(),
-            &p.symbol,
-            p.max_depth,
-        )
-        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let result = crate::impact::walk_dependents(self.indexer.store(), &p.symbol, p.max_depth)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         let output = crate::impact::format_impact(&result);
         Ok(CallToolResult::success(vec![Content::text(output)]))
@@ -300,11 +293,7 @@ fn build_overview(
         }
     }
 
-    let scope_arg = if scope.is_empty() {
-        None
-    } else {
-        Some(scope)
-    };
+    let scope_arg = if scope.is_empty() { None } else { Some(scope) };
 
     let dir_stats = store.get_directory_stats(scope_arg)?;
     if !dir_stats.is_empty() {
@@ -351,6 +340,23 @@ fn build_overview(
     }
 
     Ok(out)
+}
+
+#[tool_handler]
+impl rmcp::handler::server::ServerHandler for TokenStuntServer {
+    fn get_info(&self) -> InitializeResult {
+        let capabilities = ServerCapabilities::builder().enable_tools().build();
+
+        InitializeResult::new(capabilities)
+            .with_server_info(
+                Implementation::new("tokenstunt", env!("CARGO_PKG_VERSION"))
+                    .with_title("TokenStunt")
+                    .with_description("Smart code search for Claude Code. Finds the exact code you need — saves 95% of tokens.")
+            )
+            .with_instructions(
+                "TokenStunt provides AST-level semantic code search. Use ts_search instead of Grep+Read when looking for code by concept — it returns exact symbol bodies, saving 95% of tokens. Use ts_symbol for exact name lookups. Use ts_context to understand what a symbol calls and what calls it. Use ts_impact before refactoring to understand blast radius. Use ts_overview to orient in the project. Use ts_setup to check index health. Only use Read for files you need to modify. Recommended workflow: ts_overview → ts_search → ts_symbol → ts_context/ts_impact → Read."
+            )
+    }
 }
 
 #[cfg(test)]
@@ -446,7 +452,10 @@ mod tests {
         });
         let result = server.ts_search(params).await.unwrap();
         let text = text_content(&result);
-        assert!(text.contains("authenticateUser"), "expected block name in results");
+        assert!(
+            text.contains("authenticateUser"),
+            "expected block name in results"
+        );
     }
 
     #[tokio::test]
@@ -499,8 +508,14 @@ mod tests {
         let result = server.ts_context(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("authenticateUser"));
-        assert!(text.contains("Dependencies"), "should show dependencies section");
-        assert!(text.contains("validateToken"), "should list validateToken as dependency");
+        assert!(
+            text.contains("Dependencies"),
+            "should show dependencies section"
+        );
+        assert!(
+            text.contains("validateToken"),
+            "should list validateToken as dependency"
+        );
     }
 
     #[tokio::test]
@@ -514,7 +529,10 @@ mod tests {
         let text = text_content(&result);
         assert!(text.contains("Dependencies"));
         assert!(text.contains("validateToken"));
-        assert!(!text.contains("Dependents"), "should not show dependents section");
+        assert!(
+            !text.contains("Dependents"),
+            "should not show dependents section"
+        );
     }
 
     #[tokio::test]
@@ -527,9 +545,18 @@ mod tests {
         });
         let result = server.ts_context(params).await.unwrap();
         let text = text_content(&result);
-        assert!(text.contains("Dependents"), "should show dependents section");
-        assert!(text.contains("authenticateUser"), "should list authenticateUser as dependent");
-        assert!(!text.contains("Dependencies"), "should not show dependencies section");
+        assert!(
+            text.contains("Dependents"),
+            "should show dependents section"
+        );
+        assert!(
+            text.contains("authenticateUser"),
+            "should list authenticateUser as dependent"
+        );
+        assert!(
+            !text.contains("Dependencies"),
+            "should not show dependencies section"
+        );
     }
 
     #[tokio::test]
@@ -556,10 +583,22 @@ mod tests {
         assert!(text.contains("Project Overview"), "should contain header");
         assert!(text.contains("/test"), "should contain root path");
         assert!(text.contains("Languages"), "should contain language stats");
-        assert!(text.contains("typescript"), "should list typescript language");
-        assert!(text.contains("Module Structure"), "should contain module structure");
-        assert!(text.contains("Public API"), "should list public API symbols");
-        assert!(text.contains("authenticateUser"), "should list authenticateUser");
+        assert!(
+            text.contains("typescript"),
+            "should list typescript language"
+        );
+        assert!(
+            text.contains("Module Structure"),
+            "should contain module structure"
+        );
+        assert!(
+            text.contains("Public API"),
+            "should list public API symbols"
+        );
+        assert!(
+            text.contains("authenticateUser"),
+            "should list authenticateUser"
+        );
     }
 
     #[tokio::test]
@@ -580,24 +619,5 @@ mod tests {
         });
         let second = text_content(&server.ts_overview(params).await.unwrap());
         assert_eq!(first, second);
-    }
-}
-
-#[tool_handler]
-impl rmcp::handler::server::ServerHandler for TokenStuntServer {
-    fn get_info(&self) -> InitializeResult {
-        let capabilities = ServerCapabilities::builder()
-            .enable_tools()
-            .build();
-
-        InitializeResult::new(capabilities)
-            .with_server_info(
-                Implementation::new("tokenstunt", env!("CARGO_PKG_VERSION"))
-                    .with_title("TokenStunt")
-                    .with_description("Smart code search for Claude Code. Finds the exact code you need — saves 95% of tokens.")
-            )
-            .with_instructions(
-                "TokenStunt provides AST-level semantic code search. Use ts_search instead of Grep+Read when looking for code by concept — it returns exact symbol bodies, saving 95% of tokens. Use ts_symbol for exact name lookups. Use ts_context to understand what a symbol calls and what calls it. Use ts_impact before refactoring to understand blast radius. Use ts_overview to orient in the project. Use ts_setup to check index health. Only use Read for files you need to modify. Recommended workflow: ts_overview → ts_search → ts_symbol → ts_context/ts_impact → Read."
-            )
     }
 }

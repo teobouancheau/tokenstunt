@@ -35,7 +35,13 @@ mod tests {
 
     #[test]
     fn test_load_provider_ollama() {
-        let provider = load_provider("ollama", "http://localhost:11434", "nomic-embed-text", 768, None);
+        let provider = load_provider(
+            "ollama",
+            "http://localhost:11434",
+            "nomic-embed-text",
+            768,
+            None,
+        );
         assert!(provider.is_ok());
         assert_eq!(provider.unwrap().dimensions(), 768);
     }
@@ -57,6 +63,9 @@ mod tests {
     fn test_load_provider_unknown() {
         let result = load_provider("unknown", "http://localhost", "model", 768, None);
         let err = result.err().expect("should return an error");
-        assert!(err.to_string().contains("unknown embedding provider: unknown"));
+        assert!(
+            err.to_string()
+                .contains("unknown embedding provider: unknown")
+        );
     }
 }

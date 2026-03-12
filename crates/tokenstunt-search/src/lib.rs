@@ -157,17 +157,17 @@ impl<'a> SearchEngine<'a> {
             })
             .collect();
 
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(limit);
 
         Ok(results)
     }
 
-    pub fn lookup_symbol(
-        &self,
-        name: &str,
-        kind: Option<CodeBlockKind>,
-    ) -> Result<Vec<CodeBlock>> {
+    pub fn lookup_symbol(&self, name: &str, kind: Option<CodeBlockKind>) -> Result<Vec<CodeBlock>> {
         self.store.lookup_symbol(name, kind)
     }
 }
@@ -238,7 +238,10 @@ mod tests {
 
     #[test]
     fn test_build_fts_query() {
-        assert_eq!(build_fts_query("authenticate user"), "authenticate* OR user*");
+        assert_eq!(
+            build_fts_query("authenticate user"),
+            "authenticate* OR user*"
+        );
         assert_eq!(build_fts_query("single"), "single*");
         assert_eq!(build_fts_query(""), "");
     }

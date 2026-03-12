@@ -12,8 +12,38 @@ impl LanguageExtractor for CExtractor {
         symbols
     }
 
-    fn extract_references(&self, _root: Node<'_>, _source: &[u8]) -> Vec<RawReference> {
-        vec![]
+    fn extract_references(&self, root: Node<'_>, source: &[u8]) -> Vec<RawReference> {
+        let mut refs = Vec::new();
+        let mut cursor = root.walk();
+
+        for child in root.children(&mut cursor) {
+            if child.kind() != "preproc_include" {
+                continue;
+            }
+
+            let path_node = match child.child_by_field_name("path") {
+                Some(n) => n,
+                None => continue,
+            };
+
+            let raw = node_text(path_node, source);
+            let stripped = raw.trim_matches(|c| c == '<' || c == '>' || c == '"');
+            let target_name = stripped
+                .rsplit('/')
+                .next()
+                .unwrap_or(stripped)
+                .trim_end_matches(".h")
+                .to_string();
+
+            refs.push(RawReference {
+                source_symbol: String::new(),
+                target_name,
+                kind: "import",
+                line: child.start_position().row as u32 + 1,
+            });
+        }
+
+        refs
     }
 }
 
@@ -137,13 +167,13 @@ fn extract_body_methods(node: Node<'_>, source: &[u8]) -> Vec<ParsedSymbol> {
 
     let mut cursor = body.walk();
     for child in body.children(&mut cursor) {
-        if child.kind() == "function_definition" {
-            if let Some(sym) = extract_function(child, source) {
-                methods.push(ParsedSymbol {
-                    kind: "method",
-                    ..sym
-                });
-            }
+        if child.kind() == "function_definition"
+            && let Some(sym) = extract_function(child, source)
+        {
+            methods.push(ParsedSymbol {
+                kind: "method",
+                ..sym
+            });
         }
     }
 

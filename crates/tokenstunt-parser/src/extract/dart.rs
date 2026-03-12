@@ -17,8 +17,20 @@ impl LanguageExtractor for DartExtractor {
         symbols
     }
 
-    fn extract_references(&self, _root: Node<'_>, _source: &[u8]) -> Vec<RawReference> {
-        vec![]
+    fn extract_references(&self, root: Node<'_>, source: &[u8]) -> Vec<RawReference> {
+        let mut refs = Vec::new();
+        let mut cursor = root.walk();
+
+        for child in root.children(&mut cursor) {
+            let text = node_text(child, source);
+            if text.starts_with("import")
+                && let Some(r) = extract_import_ref(child, source)
+            {
+                refs.push(r);
+            }
+        }
+
+        refs
     }
 }
 
@@ -107,10 +119,10 @@ fn extract_enum(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
 fn collect_methods(body: Node<'_>, source: &[u8], children: &mut Vec<ParsedSymbol>) {
     let mut cursor = body.walk();
     for child in body.children(&mut cursor) {
-        if child.kind() == "method_signature" {
-            if let Some(method) = extract_method_signature(child, source) {
-                children.push(method);
-            }
+        if child.kind() == "method_signature"
+            && let Some(method) = extract_method_signature(child, source)
+        {
+            children.push(method);
         }
     }
 }
@@ -140,4 +152,72 @@ fn extract_method_signature(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbo
 
 fn extract_first_line(text: &str) -> String {
     text.lines().next().unwrap_or("").to_string()
+}
+
+/// Walk the node tree to find the first string literal descendant.
+fn find_string_literal<'a>(node: Node<'a>, source: &[u8]) -> Option<String> {
+    // Direct match: string_literal or uri (used in some grammar versions)
+    if node.kind() == "string_literal"
+        || node.kind() == "uri"
+        || node.kind() == "string"
+        || node.kind() == "uri_expr"
+    {
+        let raw = node_text(node, source);
+        return Some(strip_quotes(&raw));
+    }
+
+    // Recurse into children
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if let Some(s) = find_string_literal(child, source) {
+            return Some(s);
+        }
+    }
+
+    None
+}
+
+fn strip_quotes(s: &str) -> String {
+    let trimmed = s.trim();
+    if (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+        || (trimmed.starts_with('"') && trimmed.ends_with('"'))
+    {
+        trimmed[1..trimmed.len() - 1].to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Extract the last meaningful path segment from a Dart import path, stripping `.dart`.
+///
+/// Examples:
+/// - `"dart:io"`           -> `"io"`
+/// - `"package:flutter/material.dart"` -> `"material"`
+/// - `"helper.dart"`       -> `"helper"`
+fn import_target_name(path: &str) -> String {
+    // Strip scheme prefix (dart: / package:)
+    let after_scheme = if let Some(pos) = path.find(':') {
+        &path[pos + 1..]
+    } else {
+        path
+    };
+
+    // Take last slash-separated segment
+    let segment = after_scheme.split('/').next_back().unwrap_or(after_scheme);
+
+    // Strip .dart extension
+    segment.strip_suffix(".dart").unwrap_or(segment).to_string()
+}
+
+fn extract_import_ref(node: Node<'_>, source: &[u8]) -> Option<RawReference> {
+    let line = node.start_position().row as u32 + 1;
+    let path = find_string_literal(node, source)?;
+    let target_name = import_target_name(&path);
+
+    Some(RawReference {
+        source_symbol: String::new(),
+        target_name,
+        kind: "import",
+        line,
+    })
 }

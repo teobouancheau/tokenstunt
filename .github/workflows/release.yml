@@ -9,7 +9,20 @@ permissions:
   contents: write
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify tag author
+        run: |
+          TAG_AUTHOR=$(git log -1 --format='%ae' ${{ github.ref }})
+          if [[ "${{ github.actor }}" != "teobouancheau" ]]; then
+            echo "Release can only be triggered by teobouancheau, got: ${{ github.actor }}"
+            exit 1
+          fi
+
   build:
+    needs: verify
     strategy:
       matrix:
         include:
@@ -32,11 +45,17 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - uses: Swatinem/rust-cache@v2
+
       - name: Install cross-compilation tools
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Test
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: cargo test
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
@@ -50,7 +69,7 @@ jobs:
           cd ../../..
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: tokenstunt-${{ matrix.target }}
           path: tokenstunt-${{ matrix.target }}.tar.gz
@@ -58,12 +77,13 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+    environment: release
 
     steps:
       - uses: actions/checkout@v6
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           path: artifacts
 

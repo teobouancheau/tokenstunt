@@ -3,9 +3,7 @@ use tokenstunt_store::CodeBlock;
 pub fn format_block(block: &CodeBlock, score: Option<f64>) -> String {
     let file_path = block.file_path.as_deref().unwrap_or("unknown");
     let language = block.language.as_deref().unwrap_or("text");
-    let score_str = score
-        .map(|s| format!(" [{:.2}]", s))
-        .unwrap_or_default();
+    let score_str = score.map(|s| format!(" [{:.2}]", s)).unwrap_or_default();
 
     format!(
         "## {} ({}) -- {}:{}-{}{}\n\n```{}\n{}\n```",
@@ -81,8 +79,14 @@ mod tests {
             language: None,
         };
         let output = format_block(&block, None);
-        assert!(output.contains("unknown"), "missing file_path should show 'unknown'");
-        assert!(output.contains("```text"), "missing language should fallback to 'text'");
+        assert!(
+            output.contains("unknown"),
+            "missing file_path should show 'unknown'"
+        );
+        assert!(
+            output.contains("```text"),
+            "missing language should fallback to 'text'"
+        );
     }
 
     #[test]

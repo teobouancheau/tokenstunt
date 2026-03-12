@@ -1,8 +1,9 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
+use tokio::task::JoinHandle;
 use tracing::{info, warn};
 use xxhash_rust::xxh3::xxh3_64;
 
@@ -16,6 +17,7 @@ pub struct Indexer {
     store: Store,
     extractor: SymbolExtractor,
     embedder: Option<Arc<dyn EmbeddingProvider>>,
+    embedding_handles: Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl Indexer {
@@ -26,6 +28,7 @@ impl Indexer {
             store,
             extractor,
             embedder,
+            embedding_handles: Mutex::new(Vec::new()),
         })
     }
 
@@ -37,10 +40,21 @@ impl Indexer {
         self.embedder.as_ref()
     }
 
+    pub async fn await_embeddings(&self) {
+        let handles: Vec<_> = {
+            let mut lock = self
+                .embedding_handles
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            std::mem::take(&mut *lock)
+        };
+        for handle in handles {
+            let _ = handle.await;
+        }
+    }
+
     pub fn index_directory(&self, root: &Path) -> Result<IndexStats> {
-        let root_str = root
-            .to_str()
-            .context("non-UTF-8 path")?;
+        let root_str = root.to_str().context("non-UTF-8 path")?;
         let repo_name = root
             .file_name()
             .and_then(|n| n.to_str())
@@ -80,11 +94,12 @@ impl Indexer {
 
                 let content_hash = xxh3_64(source.as_bytes());
 
-                if let Ok(Some(existing_hash)) = self.store.get_file_hash_with_conn(conn, repo_id, &rel_path) {
-                    if existing_hash == content_hash {
-                        stats.skipped += 1;
-                        continue;
-                    }
+                if let Ok(Some(existing_hash)) =
+                    self.store.get_file_hash_with_conn(conn, repo_id, &rel_path)
+                    && existing_hash == content_hash
+                {
+                    stats.skipped += 1;
+                    continue;
                 }
 
                 if !registry.is_supported(entry.language) {
@@ -143,9 +158,11 @@ impl Indexer {
                                 .unwrap_or(fallback_id)
                         };
 
-                        let target = self
-                            .store
-                            .lookup_symbol_with_conn(conn, &reference.target_name, None)?;
+                        let target = self.store.lookup_symbol_with_conn(
+                            conn,
+                            &reference.target_name,
+                            None,
+                        )?;
                         let target_block_id = target.first().map(|b| b.id);
 
                         self.store.insert_dependency_with_conn(
@@ -161,19 +178,40 @@ impl Indexer {
                 stats.files += 1;
             }
 
-            let deleted = self.store.delete_stale_files_with_conn(conn, repo_id, &indexed_paths)?;
+            let deleted = self
+                .store
+                .delete_stale_files_with_conn(conn, repo_id, &indexed_paths)?;
             stats.deleted_files = deleted;
+
+            // Resolve unresolved dependencies now that all symbols are indexed
+            let unresolved = self.store.get_unresolved_dependencies_with_conn(conn)?;
+            for (source_block_id, target_name, _kind) in &unresolved {
+                let targets = self
+                    .store
+                    .lookup_symbol_with_conn(conn, target_name, None)?;
+                if let Some(target) = targets.first() {
+                    self.store.resolve_dependency_with_conn(
+                        conn,
+                        *source_block_id,
+                        target_name,
+                        target.id,
+                    )?;
+                }
+            }
 
             Ok(stats)
         })?;
 
-        if !embedding_work.is_empty() {
-            if let Some(embedder) = &self.embedder {
-                spawn_embedding_task(
-                    self.store.db_path().to_path_buf(),
-                    Arc::clone(embedder),
-                    embedding_work,
-                );
+        if !embedding_work.is_empty()
+            && let Some(embedder) = &self.embedder
+        {
+            let handle = spawn_embedding_task(
+                self.store.db_path().to_path_buf(),
+                Arc::clone(embedder),
+                embedding_work,
+            );
+            if let Ok(mut handles) = self.embedding_handles.lock() {
+                handles.push(handle);
             }
         }
 
@@ -227,11 +265,10 @@ impl Indexer {
 
                 if let Ok(Some(existing_hash)) =
                     self.store.get_file_hash_with_conn(conn, repo_id, &rel_path)
+                    && existing_hash == content_hash
                 {
-                    if existing_hash == content_hash {
-                        stats.unchanged += 1;
-                        continue;
-                    }
+                    stats.unchanged += 1;
+                    continue;
                 }
 
                 if !registry.is_supported(entry.language) {
@@ -239,7 +276,13 @@ impl Indexer {
                 }
 
                 self.index_file_with_conn(
-                    conn, repo_id, root, &entry.path, &rel_path, entry.language, &source,
+                    conn,
+                    repo_id,
+                    root,
+                    &entry.path,
+                    &rel_path,
+                    entry.language,
+                    &source,
                     &mut embedding_work,
                 )?;
                 stats.updated += 1;
@@ -258,13 +301,16 @@ impl Indexer {
             Ok(stats)
         })?;
 
-        if !embedding_work.is_empty() {
-            if let Some(embedder) = &self.embedder {
-                spawn_embedding_task(
-                    self.store.db_path().to_path_buf(),
-                    Arc::clone(embedder),
-                    embedding_work,
-                );
+        if !embedding_work.is_empty()
+            && let Some(embedder) = &self.embedder
+        {
+            let handle = spawn_embedding_task(
+                self.store.db_path().to_path_buf(),
+                Arc::clone(embedder),
+                embedding_work,
+            );
+            if let Ok(mut handles) = self.embedding_handles.lock() {
+                handles.push(handle);
             }
         }
 
@@ -289,7 +335,9 @@ impl Indexer {
         let mut embedding_work: Vec<(i64, String)> = Vec::new();
 
         let stats = self.store.write_transaction(|conn| {
-            let repo_id = self.store.ensure_repo_with_conn(conn, root_str, repo_name)?;
+            let repo_id = self
+                .store
+                .ensure_repo_with_conn(conn, root_str, repo_name)?;
             let mut stats = ReindexStats::default();
 
             for path in paths {
@@ -333,15 +381,20 @@ impl Indexer {
 
                 if let Ok(Some(existing_hash)) =
                     self.store.get_file_hash_with_conn(conn, repo_id, &rel_path)
+                    && existing_hash == content_hash
                 {
-                    if existing_hash == content_hash {
-                        stats.unchanged += 1;
-                        continue;
-                    }
+                    stats.unchanged += 1;
+                    continue;
                 }
 
                 self.index_file_with_conn(
-                    conn, repo_id, root, path, &rel_path, language, &source,
+                    conn,
+                    repo_id,
+                    root,
+                    path,
+                    &rel_path,
+                    language,
+                    &source,
                     &mut embedding_work,
                 )?;
                 stats.reindexed += 1;
@@ -352,13 +405,16 @@ impl Indexer {
             Ok(stats)
         })?;
 
-        if !embedding_work.is_empty() {
-            if let Some(embedder) = &self.embedder {
-                spawn_embedding_task(
-                    self.store.db_path().to_path_buf(),
-                    Arc::clone(embedder),
-                    embedding_work,
-                );
+        if !embedding_work.is_empty()
+            && let Some(embedder) = &self.embedder
+        {
+            let handle = spawn_embedding_task(
+                self.store.db_path().to_path_buf(),
+                Arc::clone(embedder),
+                embedding_work,
+            );
+            if let Ok(mut handles) = self.embedding_handles.lock() {
+                handles.push(handle);
             }
         }
 
@@ -373,6 +429,7 @@ impl Indexer {
         Ok(stats)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn index_file_with_conn(
         &self,
         conn: &Connection,
@@ -435,9 +492,9 @@ impl Indexer {
                         .unwrap_or(fallback_id)
                 };
 
-                let target = self
-                    .store
-                    .lookup_symbol_with_conn(conn, &reference.target_name, None)?;
+                let target =
+                    self.store
+                        .lookup_symbol_with_conn(conn, &reference.target_name, None)?;
                 let target_block_id = target.first().map(|b| b.id);
 
                 self.store.insert_dependency_with_conn(
@@ -458,7 +515,8 @@ impl Indexer {
         let parts: Vec<&str> = rel_path.split('/').collect();
         for i in 1..parts.len() {
             let scope = format!("{}/", parts[..i].join("/"));
-            self.store.invalidate_overview_cache_with_conn(conn, &scope)?;
+            self.store
+                .invalidate_overview_cache_with_conn(conn, &scope)?;
         }
         // Also invalidate root scope
         self.store.invalidate_overview_cache_with_conn(conn, "")?;
@@ -498,11 +556,7 @@ fn count_symbols(symbol: &ParsedSymbol) -> u64 {
     1 + symbol.children.iter().map(count_symbols).sum::<u64>()
 }
 
-fn collect_embedding_work(
-    symbol: &ParsedSymbol,
-    block_id: i64,
-    work: &mut Vec<(i64, String)>,
-) {
+fn collect_embedding_work(symbol: &ParsedSymbol, block_id: i64, work: &mut Vec<(i64, String)>) {
     if !symbol.content.is_empty() {
         work.push((block_id, symbol.content.clone()));
     }
@@ -515,7 +569,7 @@ fn spawn_embedding_task(
     db_path: PathBuf,
     embedder: Arc<dyn EmbeddingProvider>,
     work: Vec<(i64, String)>,
-) {
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let store = match tokenstunt_store::Store::open(&db_path) {
             Ok(s) => s,
@@ -549,7 +603,7 @@ fn spawn_embedding_task(
         }
 
         info!(total = work.len(), "background embedding complete");
-    });
+    })
 }
 
 #[derive(Debug, Default)]
@@ -791,10 +845,22 @@ mod tests {
         let handler_blocks = indexer.store().lookup_symbol("handler", None).unwrap();
         assert!(!handler_blocks.is_empty());
 
+        // UserService should be resolved after the resolution pass
         let unresolved = indexer.store().get_unresolved_dependencies().unwrap();
         assert!(
-            unresolved.iter().any(|(_, name, _)| name == "UserService"),
-            "expected unresolved dependency for UserService, got: {unresolved:?}"
+            !unresolved.iter().any(|(_, name, _)| name == "UserService"),
+            "UserService should be resolved, but found in unresolved: {unresolved:?}"
+        );
+
+        let service_blocks = indexer.store().lookup_symbol("UserService", None).unwrap();
+        assert!(!service_blocks.is_empty());
+        let dependents = indexer
+            .store()
+            .get_dependents(service_blocks[0].id)
+            .unwrap();
+        assert!(
+            !dependents.is_empty(),
+            "UserService should have dependents after resolution"
         );
     }
 }

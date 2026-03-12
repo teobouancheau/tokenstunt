@@ -112,15 +112,15 @@ fn extract_class(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
                 "decorated_definition" => {
                     let mut inner_cursor = child.walk();
                     for inner in child.children(&mut inner_cursor) {
-                        if inner.kind() == "function_definition" {
-                            if let Some(method) = extract_function(inner, source) {
-                                methods.push(ParsedSymbol {
-                                    kind: "method",
-                                    start_line: child.start_position().row as u32 + 1,
-                                    content: node_text(child, source),
-                                    ..method
-                                });
-                            }
+                        if inner.kind() == "function_definition"
+                            && let Some(method) = extract_function(inner, source)
+                        {
+                            methods.push(ParsedSymbol {
+                                kind: "method",
+                                start_line: child.start_position().row as u32 + 1,
+                                content: node_text(child, source),
+                                ..method
+                            });
                         }
                     }
                 }
@@ -245,7 +245,12 @@ fn extract_from_import(node: Node<'_>, source: &[u8], out: &mut Vec<RawReference
     }
 }
 
-fn extract_from_import_names(node: Node<'_>, source: &[u8], line: u32, out: &mut Vec<RawReference>) {
+fn extract_from_import_names(
+    node: Node<'_>,
+    source: &[u8],
+    line: u32,
+    out: &mut Vec<RawReference>,
+) {
     let mut cursor = node.walk();
     let mut past_import = false;
 
