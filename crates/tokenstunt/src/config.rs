@@ -10,6 +10,7 @@ pub struct Config {
 
 #[derive(Debug, Deserialize)]
 pub struct EmbeddingsConfig {
+    #[serde(default = "default_true")]
     pub enabled: bool,
     pub provider: String,
     pub model: String,
@@ -18,6 +19,10 @@ pub struct EmbeddingsConfig {
     pub dimensions: usize,
     #[allow(dead_code)]
     pub batch_size: Option<usize>,
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 impl Config {
@@ -73,6 +78,27 @@ dimensions = 1536
         assert_eq!(emb.dimensions, 1536);
         assert!(emb.api_key.is_none());
         assert!(emb.batch_size.is_none());
+    }
+
+    #[test]
+    fn load_defaults_enabled_to_true_when_omitted() {
+        let dir = TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            r#"
+[embeddings]
+provider = "openai-compat"
+model = "nomic-embed-text-v1.5"
+endpoint = "http://localhost:1234/v1/embeddings"
+dimensions = 768
+"#,
+        );
+
+        let config = Config::load(dir.path()).unwrap();
+        let emb = config.embeddings.unwrap();
+        assert!(emb.enabled);
+        assert_eq!(emb.provider, "openai-compat");
+        assert_eq!(emb.dimensions, 768);
     }
 
     #[test]
