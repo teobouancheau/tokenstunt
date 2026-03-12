@@ -648,11 +648,31 @@ impl Store {
 
     pub fn invalidate_overview_cache(&self, scope: &str) -> Result<()> {
         let conn = self.write_lock()?;
+        self.invalidate_overview_cache_with_conn(&conn, scope)
+    }
+
+    pub fn invalidate_overview_cache_with_conn(
+        &self,
+        conn: &Connection,
+        scope: &str,
+    ) -> Result<()> {
         conn.execute(
             "DELETE FROM overview_cache WHERE scope = ?1",
             params![scope],
         )?;
         Ok(())
+    }
+
+    pub fn get_repo_file_paths_with_conn(
+        &self,
+        conn: &Connection,
+        repo_id: i64,
+    ) -> Result<Vec<String>> {
+        let mut stmt = conn.prepare("SELECT path FROM files WHERE repo_id = ?1")?;
+        let rows = stmt
+            .query_map(params![repo_id], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     fn map_code_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<CodeBlock> {
