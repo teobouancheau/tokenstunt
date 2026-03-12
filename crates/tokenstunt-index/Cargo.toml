@@ -7,12 +7,14 @@ edition.workspace = true
 tokenstunt-store = { path = "../tokenstunt-store" }
 tokenstunt-parser = { path = "../tokenstunt-parser" }
 tokenstunt-search = { path = "../tokenstunt-search" }
+tokenstunt-embeddings = { path = "../tokenstunt-embeddings" }
 tokio.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 serde.workspace = true
 ignore = "0.4"
+notify = "7"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [dev-dependencies]

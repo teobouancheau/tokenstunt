@@ -1,0 +1,183 @@
+use tree_sitter::Node;
+
+use super::helpers::{child_text_by_field, node_text};
+use super::{LanguageExtractor, ParsedSymbol, RawReference};
+
+pub(crate) struct RustExtractor;
+
+impl LanguageExtractor for RustExtractor {
+    fn extract_symbols(&self, root: Node<'_>, source: &[u8]) -> Vec<ParsedSymbol> {
+        let mut symbols = Vec::new();
+        let mut cursor = root.walk();
+
+        for child in root.children(&mut cursor) {
+            visit_node(child, source, &mut symbols);
+        }
+
+        symbols
+    }
+
+    fn extract_references(&self, _root: Node<'_>, _source: &[u8]) -> Vec<RawReference> {
+        vec![]
+    }
+}
+
+fn visit_node(node: Node<'_>, source: &[u8], out: &mut Vec<ParsedSymbol>) {
+    match node.kind() {
+        "function_item" => {
+            if let Some(sym) = extract_function(node, source) {
+                out.push(sym);
+            }
+        }
+        "struct_item" => {
+            if let Some(sym) = extract_struct(node, source) {
+                out.push(sym);
+            }
+        }
+        "enum_item" => {
+            if let Some(sym) = extract_enum(node, source) {
+                out.push(sym);
+            }
+        }
+        "trait_item" => {
+            if let Some(sym) = extract_trait(node, source) {
+                out.push(sym);
+            }
+        }
+        "impl_item" => {
+            extract_impl(node, source, out);
+        }
+        "const_item" | "static_item" => {
+            if let Some(sym) = extract_const(node, source) {
+                out.push(sym);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn extract_function(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
+    let name = child_text_by_field(node, "name", source)?;
+    let content = node_text(node, source);
+    let signature = extract_first_line(&content);
+
+    Some(ParsedSymbol {
+        name,
+        kind: "function",
+        start_line: node.start_position().row as u32 + 1,
+        end_line: node.end_position().row as u32 + 1,
+        content,
+        signature,
+        children: vec![],
+    })
+}
+
+fn extract_struct(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
+    let name = child_text_by_field(node, "name", source)?;
+    let content = node_text(node, source);
+    let signature = format!("struct {name}");
+
+    Some(ParsedSymbol {
+        name,
+        kind: "struct",
+        start_line: node.start_position().row as u32 + 1,
+        end_line: node.end_position().row as u32 + 1,
+        content,
+        signature,
+        children: vec![],
+    })
+}
+
+fn extract_enum(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
+    let name = child_text_by_field(node, "name", source)?;
+    let content = node_text(node, source);
+    let signature = format!("enum {name}");
+
+    Some(ParsedSymbol {
+        name,
+        kind: "enum",
+        start_line: node.start_position().row as u32 + 1,
+        end_line: node.end_position().row as u32 + 1,
+        content,
+        signature,
+        children: vec![],
+    })
+}
+
+fn extract_trait(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
+    let name = child_text_by_field(node, "name", source)?;
+    let content = node_text(node, source);
+    let signature = format!("trait {name}");
+
+    let mut methods = Vec::new();
+    if let Some(body) = node.child_by_field_name("body") {
+        let mut cursor = body.walk();
+        for child in body.children(&mut cursor) {
+            if child.kind() == "function_signature_item" || child.kind() == "function_item" {
+                if let Some(method_name) = child_text_by_field(child, "name", source) {
+                    let method_content = node_text(child, source);
+                    methods.push(ParsedSymbol {
+                        name: method_name,
+                        kind: "method",
+                        start_line: child.start_position().row as u32 + 1,
+                        end_line: child.end_position().row as u32 + 1,
+                        content: method_content.clone(),
+                        signature: extract_first_line(&method_content),
+                        children: vec![],
+                    });
+                }
+            }
+        }
+    }
+
+    Some(ParsedSymbol {
+        name,
+        kind: "trait",
+        start_line: node.start_position().row as u32 + 1,
+        end_line: node.end_position().row as u32 + 1,
+        content,
+        signature,
+        children: methods,
+    })
+}
+
+fn extract_impl(node: Node<'_>, source: &[u8], out: &mut Vec<ParsedSymbol>) {
+    let type_node = node.child_by_field_name("type");
+    let type_name = type_node.map(|n| node_text(n, source));
+
+    if let Some(body) = node.child_by_field_name("body") {
+        let mut cursor = body.walk();
+        for child in body.children(&mut cursor) {
+            if child.kind() == "function_item" {
+                if let Some(mut sym) = extract_function(child, source) {
+                    sym.kind = "method";
+                    if let Some(ref tn) = type_name {
+                        sym.signature =
+                            format!("impl {tn} :: {}", extract_first_line(&sym.content));
+                    }
+                    out.push(sym);
+                }
+            }
+        }
+    }
+}
+
+fn extract_const(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
+    let name = child_text_by_field(node, "name", source)?;
+    let content = node_text(node, source);
+    let signature = extract_first_line(&content);
+
+    Some(ParsedSymbol {
+        name,
+        kind: "constant",
+        start_line: node.start_position().row as u32 + 1,
+        end_line: node.end_position().row as u32 + 1,
+        content,
+        signature,
+        children: vec![],
+    })
+}
+
+fn extract_first_line(text: &str) -> String {
+    text.lines().next().unwrap_or("").to_string()
+}

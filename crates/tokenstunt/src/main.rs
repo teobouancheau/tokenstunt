@@ -1,9 +1,12 @@
+mod config;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use rmcp::ServiceExt;
+use tokenstunt_embeddings::EmbeddingProvider;
 use tracing::info;
 
 #[derive(Parser)]
@@ -64,6 +67,32 @@ fn init_logging_stderr() {
         .init();
 }
 
+fn load_embedder(cfg: &config::Config) -> Result<Option<Arc<dyn EmbeddingProvider>>> {
+    let Some(emb_cfg) = &cfg.embeddings else {
+        return Ok(None);
+    };
+    if !emb_cfg.enabled {
+        return Ok(None);
+    }
+
+    let provider = tokenstunt_embeddings::load_provider(
+        &emb_cfg.provider,
+        &emb_cfg.endpoint,
+        &emb_cfg.model,
+        emb_cfg.dimensions,
+        emb_cfg.api_key.as_deref(),
+    )?;
+
+    info!(
+        provider = %emb_cfg.provider,
+        model = %emb_cfg.model,
+        dimensions = emb_cfg.dimensions,
+        "embeddings enabled"
+    );
+
+    Ok(Some(Arc::from(provider)))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -73,6 +102,8 @@ async fn main() -> Result<()> {
             init_logging_stderr();
 
             let root = resolve_root(root)?;
+            let cfg = config::Config::load(&root)?;
+            let embedder = load_embedder(&cfg)?;
             let db_path = resolve_db(db, &root);
 
             if let Some(parent) = db_path.parent() {
@@ -80,7 +111,7 @@ async fn main() -> Result<()> {
             }
 
             let store = tokenstunt_store::Store::open(&db_path)?;
-            let indexer = tokenstunt_index::Indexer::new(store)?;
+            let indexer = Arc::new(tokenstunt_index::Indexer::new(store, embedder)?);
 
             info!(root = %root.display(), db = %db_path.display(), "indexing");
             let stats = indexer.index_directory(&root)?;
@@ -91,7 +122,24 @@ async fn main() -> Result<()> {
                 "index ready"
             );
 
-            let server = tokenstunt_server::TokenStuntServer::new(Arc::new(indexer), root);
+            let root_str = root.to_str().context("non-UTF-8 path")?;
+            let repo_name = root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown");
+            let repo_id = indexer.store().ensure_repo(root_str, repo_name)?;
+            let reconcile_stats = indexer.reconcile(&root, repo_id)?;
+            info!(
+                updated = reconcile_stats.updated,
+                unchanged = reconcile_stats.unchanged,
+                deleted = reconcile_stats.deleted,
+                "reconciliation complete"
+            );
+
+            let _watcher = tokenstunt_index::FileWatcher::start(Arc::clone(&indexer), root.clone())?;
+            info!("file watcher started");
+
+            let server = tokenstunt_server::TokenStuntServer::new(Arc::clone(&indexer), root);
 
             info!("starting MCP server on stdio");
             let transport = rmcp::transport::io::stdio();
@@ -109,6 +157,8 @@ async fn main() -> Result<()> {
             init_logging_stderr();
 
             let root = resolve_root(root)?;
+            let cfg = config::Config::load(&root)?;
+            let embedder = load_embedder(&cfg)?;
             let db_path = resolve_db(db, &root);
 
             if let Some(parent) = db_path.parent() {
@@ -116,7 +166,7 @@ async fn main() -> Result<()> {
             }
 
             let store = tokenstunt_store::Store::open(&db_path)?;
-            let indexer = tokenstunt_index::Indexer::new(store)?;
+            let indexer = tokenstunt_index::Indexer::new(store, embedder)?;
 
             info!(root = %root.display(), "indexing");
             let stats = indexer.index_directory(&root)?;

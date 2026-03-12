@@ -68,6 +68,18 @@ pub struct LanguageRegistry {
     ts_typescript: tree_sitter::Language,
     ts_tsx: tree_sitter::Language,
     ts_python: tree_sitter::Language,
+    ts_rust: tree_sitter::Language,
+    ts_go: tree_sitter::Language,
+    ts_java: tree_sitter::Language,
+    ts_c: tree_sitter::Language,
+    ts_cpp: tree_sitter::Language,
+    ts_ruby: tree_sitter::Language,
+    #[cfg(feature = "lang-swift")]
+    ts_swift: tree_sitter::Language,
+    #[cfg(feature = "lang-kotlin")]
+    ts_kotlin: tree_sitter::Language,
+    #[cfg(feature = "lang-dart")]
+    ts_dart: tree_sitter::Language,
 }
 
 impl LanguageRegistry {
@@ -76,6 +88,18 @@ impl LanguageRegistry {
             ts_typescript: tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             ts_tsx: tree_sitter_typescript::LANGUAGE_TSX.into(),
             ts_python: tree_sitter_python::LANGUAGE.into(),
+            ts_rust: tree_sitter_rust::LANGUAGE.into(),
+            ts_go: tree_sitter_go::LANGUAGE.into(),
+            ts_java: tree_sitter_java::LANGUAGE.into(),
+            ts_c: tree_sitter_c::LANGUAGE.into(),
+            ts_cpp: tree_sitter_cpp::LANGUAGE.into(),
+            ts_ruby: tree_sitter_ruby::LANGUAGE.into(),
+            #[cfg(feature = "lang-swift")]
+            ts_swift: tree_sitter_swift::LANGUAGE.into(),
+            #[cfg(feature = "lang-kotlin")]
+            ts_kotlin: tree_sitter_kotlin_ng::LANGUAGE.into(),
+            #[cfg(feature = "lang-dart")]
+            ts_dart: tree_sitter_dart_orchard::LANGUAGE.into(),
         })
     }
 
@@ -84,6 +108,18 @@ impl LanguageRegistry {
             Language::TypeScript => Ok(self.ts_typescript.clone()),
             Language::Tsx | Language::JavaScript => Ok(self.ts_tsx.clone()),
             Language::Python => Ok(self.ts_python.clone()),
+            Language::Rust => Ok(self.ts_rust.clone()),
+            Language::Go => Ok(self.ts_go.clone()),
+            Language::Java => Ok(self.ts_java.clone()),
+            Language::C => Ok(self.ts_c.clone()),
+            Language::Cpp => Ok(self.ts_cpp.clone()),
+            Language::Ruby => Ok(self.ts_ruby.clone()),
+            #[cfg(feature = "lang-swift")]
+            Language::Swift => Ok(self.ts_swift.clone()),
+            #[cfg(feature = "lang-kotlin")]
+            Language::Kotlin => Ok(self.ts_kotlin.clone()),
+            #[cfg(feature = "lang-dart")]
+            Language::Dart => Ok(self.ts_dart.clone()),
             other => bail!("language {:?} not yet supported", other),
         }
     }
@@ -91,8 +127,19 @@ impl LanguageRegistry {
     pub fn is_supported(&self, lang: Language) -> bool {
         matches!(
             lang,
-            Language::TypeScript | Language::Tsx | Language::JavaScript | Language::Python
-        )
+            Language::TypeScript
+                | Language::Tsx
+                | Language::JavaScript
+                | Language::Python
+                | Language::Rust
+                | Language::Go
+                | Language::Java
+                | Language::C
+                | Language::Cpp
+                | Language::Ruby
+        ) || cfg!(feature = "lang-swift") && matches!(lang, Language::Swift)
+            || cfg!(feature = "lang-kotlin") && matches!(lang, Language::Kotlin)
+            || cfg!(feature = "lang-dart") && matches!(lang, Language::Dart)
     }
 }
 
@@ -174,13 +221,12 @@ mod tests {
         assert!(registry.get_ts_language(Language::Tsx).is_ok());
         assert!(registry.get_ts_language(Language::JavaScript).is_ok());
         assert!(registry.get_ts_language(Language::Python).is_ok());
-
-        let err = registry.get_ts_language(Language::Rust);
-        assert!(err.is_err());
-        assert!(
-            err.unwrap_err().to_string().contains("not yet supported"),
-            "expected 'not yet supported' error for Rust"
-        );
+        assert!(registry.get_ts_language(Language::Rust).is_ok());
+        assert!(registry.get_ts_language(Language::Go).is_ok());
+        assert!(registry.get_ts_language(Language::Java).is_ok());
+        assert!(registry.get_ts_language(Language::C).is_ok());
+        assert!(registry.get_ts_language(Language::Cpp).is_ok());
+        assert!(registry.get_ts_language(Language::Ruby).is_ok());
     }
 
     #[test]
@@ -190,8 +236,11 @@ mod tests {
         assert!(registry.is_supported(Language::Tsx));
         assert!(registry.is_supported(Language::JavaScript));
         assert!(registry.is_supported(Language::Python));
-        assert!(!registry.is_supported(Language::Rust));
-        assert!(!registry.is_supported(Language::Go));
-        assert!(!registry.is_supported(Language::Java));
+        assert!(registry.is_supported(Language::Rust));
+        assert!(registry.is_supported(Language::Go));
+        assert!(registry.is_supported(Language::Java));
+        assert!(registry.is_supported(Language::C));
+        assert!(registry.is_supported(Language::Cpp));
+        assert!(registry.is_supported(Language::Ruby));
     }
 }

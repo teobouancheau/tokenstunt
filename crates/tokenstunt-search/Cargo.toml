@@ -5,7 +5,9 @@ edition.workspace = true
 
 [dependencies]
 tokenstunt-store = { path = "../tokenstunt-store" }
+tokenstunt-embeddings = { path = "../tokenstunt-embeddings" }
 anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 serde.workspace = true
+tokio.workspace = true
