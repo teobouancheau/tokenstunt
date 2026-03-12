@@ -1,28 +1,43 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  verify:
+  version:
     runs-on: ubuntu-latest
+    if: github.actor == 'teobouancheau'
+    outputs:
+      version: ${{ steps.calc.outputs.version }}
+      tag: ${{ steps.calc.outputs.tag }}
+      name: ${{ steps.calc.outputs.name }}
     steps:
       - uses: actions/checkout@v6
-      - name: Verify tag author
+        with:
+          fetch-depth: 0
+
+      - name: Calculate version
+        id: calc
         run: |
-          TAG_AUTHOR=$(git log -1 --format='%ae' ${{ github.ref }})
-          if [[ "${{ github.actor }}" != "teobouancheau" ]]; then
-            echo "Release can only be triggered by teobouancheau, got: ${{ github.actor }}"
-            exit 1
+          DATE=$(date -u +%Y.%-m.%-d)
+          EXISTING=$(git tag -l "v${DATE}.*" | sort -V | tail -1)
+          if [[ -z "$EXISTING" ]]; then
+            PATCH=0
+          else
+            LAST_PATCH=$(echo "$EXISTING" | sed "s/v${DATE}\.//")
+            PATCH=$((LAST_PATCH + 1))
           fi
+          VERSION="${DATE}.${PATCH}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "name=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Release: $VERSION"
 
   build:
-    needs: verify
+    needs: version
     strategy:
       matrix:
         include:
@@ -51,7 +66,24 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y gcc-aarch64-linux-gnu libssl-dev:arm64 pkg-config
+        env:
+          DEBIAN_FRONTEND: noninteractive
+
+      - name: Add arm64 architecture
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list.d/*.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ $(lsb_release -cs) main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ $(lsb_release -cs)-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev:arm64
+
+      - name: Set version in Cargo.toml
+        run: |
+          sed -i.bak 's/^version = ".*"/version = "${{ needs.version.outputs.version }}"/' Cargo.toml
+          rm -f Cargo.toml.bak
 
       - name: Test
         if: matrix.target == 'x86_64-unknown-linux-gnu'
@@ -61,12 +93,14 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          PKG_CONFIG_SYSROOT_DIR: /usr/aarch64-linux-gnu
+          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
+          OPENSSL_DIR: /usr/aarch64-linux-gnu
 
       - name: Package
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ../../../tokenstunt-${{ matrix.target }}.tar.gz tokenstunt
-          cd ../../..
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -75,12 +109,25 @@ jobs:
           path: tokenstunt-${{ matrix.target }}.tar.gz
 
   release:
-    needs: build
+    needs: [version, build]
     runs-on: ubuntu-latest
     environment: release
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set version and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          sed -i.bak 's/^version = ".*"/version = "${{ needs.version.outputs.version }}"/' Cargo.toml
+          rm -f Cargo.toml.bak
+          git add Cargo.toml
+          git commit -m "chore: bump version to ${{ needs.version.outputs.version }}"
+          git tag "${{ needs.version.outputs.tag }}"
+          git push origin main --tags
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -90,5 +137,7 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.name }}
           files: artifacts/**/*.tar.gz
           generate_release_notes: true

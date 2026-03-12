@@ -5,15 +5,13 @@
     "email": "teo@bouancheau.com"
   },
   "metadata": {
-    "description": "AST-level semantic code search for Claude Code. Returns exact functions and classes instead of entire files.",
-    "version": "1.0.0"
+    "description": "AST-level semantic code search for Claude Code. Returns exact functions and classes instead of entire files."
   },
   "plugins": [
     {
       "name": "tokenstunt",
       "source": ".",
       "description": "AST-level semantic code search. Returns exact functions and classes instead of entire files, cutting token usage by 95%.",
-      "version": "1.0.0",
       "author": {
         "name": "Teo Bouancheau"
       },
