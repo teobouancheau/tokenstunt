@@ -65,7 +65,7 @@ impl TokenStuntServer {
 
     #[tool(
         name = "ts_search",
-        description = "Hybrid semantic + keyword code search. Returns ranked code blocks (exact function/class/type bodies), not full files. Saves ~95% tokens vs grep+read."
+        description = "Code search across indexed symbols. Returns ranked code blocks (exact function/class/type bodies), not full files."
     )]
     async fn ts_search(
         &self,
@@ -103,7 +103,7 @@ impl TokenStuntServer {
 
     #[tool(
         name = "ts_symbol",
-        description = "Exact symbol lookup by name. Returns definition + signature + doc. Saves ~98% tokens vs file read."
+        description = "Exact symbol lookup by name. Returns the full definition of a function, class, or type."
     )]
     async fn ts_symbol(
         &self,
@@ -131,7 +131,7 @@ impl TokenStuntServer {
 
     #[tool(
         name = "ts_context",
-        description = "Symbol + N levels of dependency traversal (callers, callees, types used). Saves ~90% tokens vs multi-file read."
+        description = "Symbol definition + dependency graph. Shows what this symbol calls and what calls it."
     )]
     async fn ts_context(
         &self,
@@ -191,7 +191,7 @@ impl TokenStuntServer {
 
     #[tool(
         name = "ts_overview",
-        description = "Project structure summary: modules, public APIs, entry points. Saves ~99% tokens vs codebase exploration."
+        description = "Project structure: module tree, language breakdown, public API surface, and entry points."
     )]
     async fn ts_overview(
         &self,
