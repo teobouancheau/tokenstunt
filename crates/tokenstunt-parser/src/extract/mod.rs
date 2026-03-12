@@ -2,6 +2,8 @@ mod c_lang;
 mod go;
 mod helpers;
 mod java;
+#[cfg(feature = "lang-kotlin")]
+mod kotlin;
 mod python;
 mod ruby;
 mod rust_lang;
@@ -16,6 +18,8 @@ use crate::languages::{Language, LanguageRegistry};
 use c_lang::CExtractor;
 use go::GoExtractor;
 use java::JavaExtractor;
+#[cfg(feature = "lang-kotlin")]
+use kotlin::KotlinExtractor;
 use python::PythonExtractor;
 use ruby::RubyExtractor;
 use rust_lang::RustExtractor;
@@ -129,6 +133,14 @@ impl SymbolExtractor {
             #[cfg(feature = "lang-swift")]
             Language::Swift => {
                 let extractor = SwiftExtractor;
+                (
+                    extractor.extract_symbols(root, source_bytes),
+                    extractor.extract_references(root, source_bytes),
+                )
+            }
+            #[cfg(feature = "lang-kotlin")]
+            Language::Kotlin => {
+                let extractor = KotlinExtractor;
                 (
                     extractor.extract_symbols(root, source_bytes),
                     extractor.extract_references(root, source_bytes),
@@ -818,6 +830,98 @@ enum Status {
             .find(|s| s.name == "Repository")
             .unwrap();
         assert_eq!(protocol.kind, "interface");
+
+        let enm = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "Status")
+            .unwrap();
+        assert_eq!(enm.kind, "enum");
+    }
+
+    #[cfg(feature = "lang-kotlin")]
+    #[test]
+    fn test_kotlin_class_function_object_interface() {
+        let src = r#"
+fun greet(name: String): String {
+    return "Hello, $name!"
+}
+
+class UserService {
+    fun getUser(id: String): User {
+        return users[id]
+    }
+
+    fun deleteUser(id: String) {
+        users.remove(id)
+    }
+}
+
+object AppConfig {
+    fun getPort(): Int {
+        return 8080
+    }
+}
+
+interface Repository {
+    fun findById(id: String): Entity
+    fun save(entity: Entity)
+}
+
+enum class Status {
+    ACTIVE,
+    INACTIVE,
+    DELETED
+}
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Kotlin).unwrap();
+        let names: Vec<&str> = result.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"greet"), "missing greet, got: {names:?}");
+        assert!(
+            names.contains(&"UserService"),
+            "missing UserService, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"AppConfig"),
+            "missing AppConfig, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"Repository"),
+            "missing Repository, got: {names:?}"
+        );
+        assert!(names.contains(&"Status"), "missing Status, got: {names:?}");
+
+        let greet = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "greet")
+            .unwrap();
+        assert_eq!(greet.kind, "function");
+
+        let class = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "UserService")
+            .unwrap();
+        assert_eq!(class.kind, "class");
+        assert_eq!(class.children.len(), 2);
+        assert_eq!(class.children[0].name, "getUser");
+        assert_eq!(class.children[0].kind, "method");
+
+        let obj = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "AppConfig")
+            .unwrap();
+        assert_eq!(obj.kind, "module");
+
+        let iface = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "Repository")
+            .unwrap();
+        assert_eq!(iface.kind, "interface");
 
         let enm = result
             .symbols
