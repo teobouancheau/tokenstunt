@@ -1,5 +1,5 @@
 ---
-name: setup
+name: tokenstunt-setup
 description: Project diagnostics — index health, languages, embeddings status
 ---
 

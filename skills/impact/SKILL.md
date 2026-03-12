@@ -1,5 +1,5 @@
 ---
-name: impact
+name: tokenstunt-impact
 description: Blast radius analysis — dependents and affected files
 argument-hint: <symbol>
 ---

@@ -1,5 +1,5 @@
 ---
-name: configure
+name: tokenstunt-configure
 description: Configure TokenStunt embeddings — auto-detect provider, models, and dimensions
 ---
 
