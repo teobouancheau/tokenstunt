@@ -229,7 +229,14 @@ impl Store {
         Ok(conn.last_insert_rowid())
     }
 
-    pub fn search_fts(&self, query: &str, limit: usize) -> Result<Vec<CodeBlock>> {
+    pub fn search_fts(
+        &self,
+        query: &str,
+        language: Option<&str>,
+        kind: Option<&str>,
+        scope: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<CodeBlock>> {
         let conn = self.read_lock()?;
         let mut stmt = conn.prepare(
             "SELECT cb.id, cb.file_id, cb.name, cb.kind, cb.start_line, cb.end_line,
@@ -238,27 +245,18 @@ impl Store {
              JOIN code_blocks cb ON cb.id = fts.rowid
              JOIN files f ON f.id = cb.file_id
              WHERE code_blocks_fts MATCH ?1
+               AND (?2 IS NULL OR f.language = ?2)
+               AND (?3 IS NULL OR cb.kind = ?3)
+               AND (?4 IS NULL OR f.path LIKE ?4 || '%')
              ORDER BY rank
-             LIMIT ?2",
+             LIMIT ?5",
         )?;
 
         let blocks = stmt
-            .query_map(params![query, limit as i64], |row| {
-                let kind_str: String = row.get(3)?;
-                Ok(CodeBlock {
-                    id: row.get(0)?,
-                    file_id: row.get(1)?,
-                    name: row.get(2)?,
-                    kind: CodeBlockKind::from_str(&kind_str).unwrap_or(CodeBlockKind::Function),
-                    start_line: row.get(4)?,
-                    end_line: row.get(5)?,
-                    content: row.get(6)?,
-                    signature: row.get(7)?,
-                    parent_id: row.get(8)?,
-                    file_path: row.get(9)?,
-                    language: row.get(10)?,
-                })
-            })?
+            .query_map(
+                params![query, language, kind, scope, limit as i64],
+                Self::map_code_block,
+            )?
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(blocks)
@@ -820,7 +818,7 @@ mod tests {
                 None,
             )
             .unwrap();
-        let results = store.search_fts("authenticate*", 10).unwrap();
+        let results = store.search_fts("authenticate*", None, None, None, 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "authenticateUser");
     }
@@ -971,7 +969,7 @@ mod tests {
         // This should not deadlock
         let count = store.file_count().unwrap();
         assert!(count >= 1);
-        let results = store.search_fts("hello", 10).unwrap();
+        let results = store.search_fts("hello", None, None, None, 10).unwrap();
         assert_eq!(results.len(), 1);
     }
 

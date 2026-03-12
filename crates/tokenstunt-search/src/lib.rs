@@ -38,33 +38,18 @@ impl<'a> SearchEngine<'a> {
 
         let limit = if query.limit == 0 { 10 } else { query.limit };
         let fts_query = build_fts_query(&query.text);
-        let blocks = self.store.search_fts(&fts_query, limit)?;
+        let kind_str = query.symbol_kind.map(|k| k.as_str().to_string());
+        let blocks = self.store.search_fts(
+            &fts_query,
+            query.language.as_deref(),
+            kind_str.as_deref(),
+            query.scope.as_deref(),
+            limit,
+        )?;
 
         let results = blocks
             .into_iter()
             .enumerate()
-            .filter(|(_, block)| {
-                if let Some(ref lang) = query.language {
-                    if let Some(ref block_lang) = block.language {
-                        if block_lang != lang {
-                            return false;
-                        }
-                    }
-                }
-                if let Some(kind) = query.symbol_kind {
-                    if block.kind != kind {
-                        return false;
-                    }
-                }
-                if let Some(ref scope) = query.scope {
-                    if let Some(ref path) = block.file_path {
-                        if !path.starts_with(scope.as_str()) {
-                            return false;
-                        }
-                    }
-                }
-                true
-            })
             .map(|(rank, block)| SearchResult {
                 score: 1.0 / (rank as f64 + 1.0),
                 block,
