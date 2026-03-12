@@ -1,4 +1,6 @@
 mod c_lang;
+#[cfg(feature = "lang-dart")]
+mod dart;
 mod go;
 mod helpers;
 mod java;
@@ -16,6 +18,8 @@ use tree_sitter::{Node, Parser};
 
 use crate::languages::{Language, LanguageRegistry};
 use c_lang::CExtractor;
+#[cfg(feature = "lang-dart")]
+use dart::DartExtractor;
 use go::GoExtractor;
 use java::JavaExtractor;
 #[cfg(feature = "lang-kotlin")]
@@ -141,6 +145,14 @@ impl SymbolExtractor {
             #[cfg(feature = "lang-kotlin")]
             Language::Kotlin => {
                 let extractor = KotlinExtractor;
+                (
+                    extractor.extract_symbols(root, source_bytes),
+                    extractor.extract_references(root, source_bytes),
+                )
+            }
+            #[cfg(feature = "lang-dart")]
+            Language::Dart => {
+                let extractor = DartExtractor;
                 (
                     extractor.extract_symbols(root, source_bytes),
                     extractor.extract_references(root, source_bytes),
@@ -922,6 +934,65 @@ enum class Status {
             .find(|s| s.name == "Repository")
             .unwrap();
         assert_eq!(iface.kind, "interface");
+
+        let enm = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "Status")
+            .unwrap();
+        assert_eq!(enm.kind, "enum");
+    }
+
+    #[cfg(feature = "lang-dart")]
+    #[test]
+    fn test_dart_class_function_enum() {
+        let src = r#"
+String greet(String name) {
+    return "Hello, $name!";
+}
+
+class UserService {
+    User getUser(String id) {
+        return users[id];
+    }
+
+    void deleteUser(String id) {
+        users.remove(id);
+    }
+}
+
+enum Status {
+    active,
+    inactive,
+    deleted,
+}
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Dart).unwrap();
+        let names: Vec<&str> = result.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"greet"), "missing greet, got: {names:?}");
+        assert!(
+            names.contains(&"UserService"),
+            "missing UserService, got: {names:?}"
+        );
+        assert!(names.contains(&"Status"), "missing Status, got: {names:?}");
+
+        let greet = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "greet")
+            .unwrap();
+        assert_eq!(greet.kind, "function");
+
+        let class = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "UserService")
+            .unwrap();
+        assert_eq!(class.kind, "class");
+        assert_eq!(class.children.len(), 2);
+        assert_eq!(class.children[0].name, "getUser");
+        assert_eq!(class.children[0].kind, "method");
 
         let enm = result
             .symbols

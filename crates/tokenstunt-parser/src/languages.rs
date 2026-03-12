@@ -78,6 +78,8 @@ pub struct LanguageRegistry {
     ts_swift: tree_sitter::Language,
     #[cfg(feature = "lang-kotlin")]
     ts_kotlin: tree_sitter::Language,
+    #[cfg(feature = "lang-dart")]
+    ts_dart: tree_sitter::Language,
 }
 
 impl LanguageRegistry {
@@ -96,6 +98,8 @@ impl LanguageRegistry {
             ts_swift: tree_sitter_swift::LANGUAGE.into(),
             #[cfg(feature = "lang-kotlin")]
             ts_kotlin: tree_sitter_kotlin_ng::LANGUAGE.into(),
+            #[cfg(feature = "lang-dart")]
+            ts_dart: tree_sitter_dart_orchard::LANGUAGE.into(),
         })
     }
 
@@ -114,6 +118,8 @@ impl LanguageRegistry {
             Language::Swift => Ok(self.ts_swift.clone()),
             #[cfg(feature = "lang-kotlin")]
             Language::Kotlin => Ok(self.ts_kotlin.clone()),
+            #[cfg(feature = "lang-dart")]
+            Language::Dart => Ok(self.ts_dart.clone()),
             other => bail!("language {:?} not yet supported", other),
         }
     }
@@ -133,6 +139,7 @@ impl LanguageRegistry {
                 | Language::Ruby
         ) || cfg!(feature = "lang-swift") && matches!(lang, Language::Swift)
             || cfg!(feature = "lang-kotlin") && matches!(lang, Language::Kotlin)
+            || cfg!(feature = "lang-dart") && matches!(lang, Language::Dart)
     }
 }
 
