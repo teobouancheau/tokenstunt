@@ -5,10 +5,8 @@
 *.db-shm
 model/
 .DS_Store
-# Claude Code local state (not commands)
-.claude/settings*
-.claude/projects/
-.claude/*.jsonl
+# Claude Code local state
+.claude/
 .env*
 *.pem
 *.key
