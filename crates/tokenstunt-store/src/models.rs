@@ -35,21 +35,30 @@ impl CodeBlockKind {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
+        s.parse().ok()
+    }
+}
+
+impl std::str::FromStr for CodeBlockKind {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "function" => Some(Self::Function),
-            "method" => Some(Self::Method),
-            "class" => Some(Self::Class),
-            "struct" => Some(Self::Struct),
-            "enum" => Some(Self::Enum),
-            "interface" => Some(Self::Interface),
-            "type_alias" => Some(Self::TypeAlias),
-            "constant" => Some(Self::Constant),
-            "variable" => Some(Self::Variable),
-            "module" => Some(Self::Module),
-            "trait" => Some(Self::Trait),
-            "impl" => Some(Self::Impl),
-            _ => None,
+            "function" => Ok(Self::Function),
+            "method" => Ok(Self::Method),
+            "class" => Ok(Self::Class),
+            "struct" => Ok(Self::Struct),
+            "enum" => Ok(Self::Enum),
+            "interface" => Ok(Self::Interface),
+            "type_alias" => Ok(Self::TypeAlias),
+            "constant" => Ok(Self::Constant),
+            "variable" => Ok(Self::Variable),
+            "module" => Ok(Self::Module),
+            "trait" => Ok(Self::Trait),
+            "impl" => Ok(Self::Impl),
+            _ => Err(()),
         }
     }
 }
@@ -74,7 +83,6 @@ pub struct CodeBlock {
     pub file_path: Option<String>,
     pub language: Option<String>,
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -105,5 +113,4 @@ mod tests {
 
         assert_eq!(CodeBlockKind::from_str("unknown"), None);
     }
-
 }

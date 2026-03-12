@@ -1,5 +1,5 @@
-use rusqlite::Connection;
 use anyhow::Result;
+use rusqlite::Connection;
 
 pub const SCHEMA_VERSION: i32 = 2;
 
@@ -106,11 +106,9 @@ pub fn initialize(conn: &Connection) -> Result<()> {
     )?;
 
     let version: Option<i32> = conn
-        .query_row(
-            "SELECT version FROM schema_version LIMIT 1",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT version FROM schema_version LIMIT 1", [], |row| {
+            row.get(0)
+        })
         .ok();
 
     match version {
