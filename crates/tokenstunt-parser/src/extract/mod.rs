@@ -1,3 +1,4 @@
+mod c_lang;
 mod go;
 mod helpers;
 mod java;
@@ -9,6 +10,7 @@ use anyhow::{Context, Result};
 use tree_sitter::{Node, Parser};
 
 use crate::languages::{Language, LanguageRegistry};
+use c_lang::CExtractor;
 use go::GoExtractor;
 use java::JavaExtractor;
 use python::PythonExtractor;
@@ -99,6 +101,13 @@ impl SymbolExtractor {
             }
             Language::Java => {
                 let extractor = JavaExtractor;
+                (
+                    extractor.extract_symbols(root, source_bytes),
+                    extractor.extract_references(root, source_bytes),
+                )
+            }
+            Language::C | Language::Cpp => {
+                let extractor = CExtractor;
                 (
                     extractor.extract_symbols(root, source_bytes),
                     extractor.extract_references(root, source_bytes),
@@ -507,6 +516,123 @@ public enum Status {
             .find(|s| s.name == "Status")
             .unwrap();
         assert_eq!(enm.kind, "enum");
+    }
+
+    #[test]
+    fn test_c_function_struct_enum() {
+        let src = r#"
+struct Config {
+    int port;
+    char* host;
+};
+
+enum Status {
+    RUNNING,
+    STOPPED,
+    ERROR
+};
+
+void greet(const char* name) {
+    printf("Hello, %s!\n", name);
+}
+
+int add(int a, int b) {
+    return a + b;
+}
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::C).unwrap();
+        let names: Vec<&str> = result.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"greet"), "missing greet, got: {names:?}");
+        assert!(names.contains(&"add"), "missing add, got: {names:?}");
+        assert!(names.contains(&"Config"), "missing Config, got: {names:?}");
+        assert!(names.contains(&"Status"), "missing Status, got: {names:?}");
+
+        let config = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "Config")
+            .unwrap();
+        assert_eq!(config.kind, "struct");
+
+        let status = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "Status")
+            .unwrap();
+        assert_eq!(status.kind, "enum");
+
+        let greet = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "greet")
+            .unwrap();
+        assert_eq!(greet.kind, "function");
+    }
+
+    #[test]
+    fn test_cpp_class_struct_enum_function() {
+        let src = r#"
+struct Point {
+    double x;
+    double y;
+};
+
+enum Color {
+    RED,
+    GREEN,
+    BLUE
+};
+
+class UserService {
+public:
+    void getUser(int id) {
+        return;
+    }
+
+    void deleteUser(int id) {
+        return;
+    }
+};
+
+int main() {
+    return 0;
+}
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Cpp).unwrap();
+        let names: Vec<&str> = result.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"Point"), "missing Point, got: {names:?}");
+        assert!(names.contains(&"Color"), "missing Color, got: {names:?}");
+        assert!(
+            names.contains(&"UserService"),
+            "missing UserService, got: {names:?}"
+        );
+        assert!(names.contains(&"main"), "missing main, got: {names:?}");
+
+        let class = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "UserService")
+            .unwrap();
+        assert_eq!(class.kind, "class");
+        assert_eq!(class.children.len(), 2);
+        assert_eq!(class.children[0].name, "getUser");
+        assert_eq!(class.children[0].kind, "method");
+
+        let point = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "Point")
+            .unwrap();
+        assert_eq!(point.kind, "struct");
+
+        let color = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "Color")
+            .unwrap();
+        assert_eq!(color.kind, "enum");
     }
 
     #[test]
