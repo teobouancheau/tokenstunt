@@ -22,8 +22,6 @@ jobs:
       - name: Calculate version
         id: calc
         run: |
-          # Cargo semver requires exactly 3 segments: MAJOR.MINOR.PATCH
-          # Format: YYYY.MDD.PATCH (e.g. 2026.312.0)
           YEAR=$(date -u +%Y)
           MONTHDAY=$(date -u +%-m%d)
           PREFIX="${YEAR}.${MONTHDAY}"
@@ -36,10 +34,9 @@ jobs:
           fi
           VERSION="${PREFIX}.${PATCH}"
           DISPLAY_DATE=$(date -u +%Y-%m-%d)
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
           echo "name=${DISPLAY_DATE}" >> "$GITHUB_OUTPUT"
-          echo "Release: $VERSION ($DISPLAY_DATE)"
 
   build:
     needs: version
@@ -54,9 +51,7 @@ jobs:
             os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-
     runs-on: ${{ matrix.os }}
-
     steps:
       - uses: actions/checkout@v6
 
@@ -73,10 +68,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
-      - name: Set version in Cargo.toml
-        run: |
-          sed -i.bak 's/^version = ".*"/version = "${{ needs.version.outputs.version }}"/' Cargo.toml
-          rm -f Cargo.toml.bak
+      - name: Set version
+        run: sed -i 's/^version = ".*"/version = "${{ needs.version.outputs.version }}"/' Cargo.toml
 
       - name: Test
         if: matrix.target == 'x86_64-unknown-linux-gnu'
@@ -102,22 +95,8 @@ jobs:
     needs: [version, build]
     runs-on: ubuntu-latest
     environment: release
-
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Create tag via API
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          SHA=$(gh api repos/${{ github.repository }}/git/ref/heads/main --jq '.object.sha')
-          gh api repos/${{ github.repository }}/git/refs \
-            -f ref="refs/tags/${{ needs.version.outputs.tag }}" \
-            -f sha="$SHA"
-
-      - name: Download all artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v5
         with:
           path: artifacts
@@ -129,3 +108,4 @@ jobs:
           name: ${{ needs.version.outputs.name }}
           files: artifacts/**/*.tar.gz
           generate_release_notes: true
+          make_latest: true
