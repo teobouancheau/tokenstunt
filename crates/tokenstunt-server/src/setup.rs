@@ -46,7 +46,7 @@ pub fn build_setup_report(store: &Store, root: &Path, has_embeddings: bool) -> R
         ));
     } else {
         out.push_str("- **Status**: Not configured\n\n");
-        out.push_str("To enable semantic search, add to `.tokenstunt/config.toml`:\n\n");
+        out.push_str("To enable semantic search, run `/tokenstunt:configure` or create a config at `~/.cache/tokenstunt/<project>/config.toml`:\n\n");
         out.push_str("```toml\n[embeddings]\nenabled = true\nprovider = \"ollama\"\nmodel = \"nomic-embed-text\"\nendpoint = \"http://localhost:11434\"\ndimensions = 768\n```\n");
     }
 

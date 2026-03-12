@@ -22,7 +22,7 @@ pub struct EmbeddingsConfig {
 
 impl Config {
     pub fn load(root: &Path) -> Result<Self> {
-        let path = root.join(".tokenstunt/config.toml");
+        let path = crate::paths::cache_config_path(root)?;
         if !path.exists() {
             return Ok(Self::default());
         }
@@ -37,6 +37,12 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    fn write_config(root: &Path, content: &str) {
+        let path = crate::paths::cache_config_path(root).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, content).unwrap();
+    }
+
     #[test]
     fn load_returns_default_when_no_config_file() {
         let dir = TempDir::new().unwrap();
@@ -47,10 +53,8 @@ mod tests {
     #[test]
     fn load_parses_embeddings_config() {
         let dir = TempDir::new().unwrap();
-        let config_dir = dir.path().join(".tokenstunt");
-        fs::create_dir_all(&config_dir).unwrap();
-        fs::write(
-            config_dir.join("config.toml"),
+        write_config(
+            dir.path(),
             r#"
 [embeddings]
 enabled = true
@@ -59,8 +63,7 @@ model = "text-embedding-3-small"
 endpoint = "https://api.openai.com/v1/embeddings"
 dimensions = 1536
 "#,
-        )
-        .unwrap();
+        );
 
         let config = Config::load(dir.path()).unwrap();
         let emb = config.embeddings.unwrap();
@@ -75,10 +78,8 @@ dimensions = 1536
     #[test]
     fn load_parses_full_embeddings_config() {
         let dir = TempDir::new().unwrap();
-        let config_dir = dir.path().join(".tokenstunt");
-        fs::create_dir_all(&config_dir).unwrap();
-        fs::write(
-            config_dir.join("config.toml"),
+        write_config(
+            dir.path(),
             r#"
 [embeddings]
 enabled = false
@@ -89,8 +90,7 @@ api_key = "sk-test"
 dimensions = 768
 batch_size = 32
 "#,
-        )
-        .unwrap();
+        );
 
         let config = Config::load(dir.path()).unwrap();
         let emb = config.embeddings.unwrap();

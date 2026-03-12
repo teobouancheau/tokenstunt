@@ -25,7 +25,7 @@ Cargo workspace, 7 crates:
 - Parser uses `LanguageExtractor` trait with one module per language in `extract/`
 - Adding a language: create `extract/<lang>.rs`, implement `LanguageExtractor`, wire in `extract/mod.rs` + `languages.rs`
 - Feature-gated languages (Swift/Kotlin/Dart) use `#[cfg(feature = "lang-X")]`
-- Config lives in `.tokenstunt/config.toml`, database in `.tokenstunt/index.db`
+- Config and database live in `~/.cache/tokenstunt/<project-name>-<hash>/`
 
 ## Rules
 - Rust edition 2024, strict mode
