@@ -3,7 +3,6 @@
 *.db
 *.db-wal
 *.db-shm
-model/
 .DS_Store
 # Claude Code local state
 .claude/
@@ -21,5 +20,3 @@ model/
 .mcp.json
 # Plugin binary (downloaded at install time)
 .claude-plugin/bin/
-# Internal docs
-docs/superpowers/
