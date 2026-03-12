@@ -51,7 +51,12 @@ struct TsContextParams {
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
-struct TsOverviewParams {}
+struct TsOverviewParams {
+    /// Scope to a directory path (e.g. "src/")
+    scope: Option<String>,
+    /// Directory depth for module tree (default: 1)
+    depth: Option<i32>,
+}
 
 #[tool_router]
 impl TokenStuntServer {
@@ -195,26 +200,106 @@ impl TokenStuntServer {
     )]
     async fn ts_overview(
         &self,
-        _params: Parameters<TsOverviewParams>,
+        params: Parameters<TsOverviewParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
         let store = self.indexer.store();
+        let scope = p.scope.as_deref().unwrap_or("");
+        let depth = p.depth.unwrap_or(1);
 
-        let file_count = store
-            .file_count()
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        let block_count = store
-            .block_count()
+        if let Some(cached) = store
+            .get_overview_cache(scope, depth)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?
+        {
+            return Ok(CallToolResult::success(vec![Content::text(cached)]));
+        }
+
+        let output = build_overview(store, &self.root, scope, depth)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        let output = format!(
-            "## Project Overview\n\n- **Root**: {}\n- **Indexed files**: {}\n- **Code blocks**: {}\n",
-            self.root.display(),
-            file_count,
-            block_count,
-        );
+        let _ = store.set_overview_cache(scope, depth, &output);
 
         Ok(CallToolResult::success(vec![Content::text(output)]))
     }
+}
+
+const ENTRY_POINT_PREFIXES: &[&str] = &["main.", "index.", "app.", "mod.", "lib."];
+
+fn build_overview(
+    store: &tokenstunt_store::Store,
+    root: &std::path::Path,
+    scope: &str,
+    _depth: i32,
+) -> anyhow::Result<String> {
+    let file_count = store.file_count()?;
+    let block_count = store.block_count()?;
+
+    let mut out = format!(
+        "## Project Overview\n\n- **Root**: {}\n- **Indexed files**: {}\n- **Code blocks**: {}\n",
+        root.display(),
+        file_count,
+        block_count,
+    );
+
+    let lang_stats = store.get_language_stats()?;
+    if !lang_stats.is_empty() {
+        out.push_str("\n### Languages\n\n");
+        for (lang, count) in &lang_stats {
+            out.push_str(&format!("- **{lang}**: {count} files\n"));
+        }
+    }
+
+    let scope_arg = if scope.is_empty() {
+        None
+    } else {
+        Some(scope)
+    };
+
+    let dir_stats = store.get_directory_stats(scope_arg)?;
+    if !dir_stats.is_empty() {
+        out.push_str("\n### Module Structure\n\n");
+        for (dir, fc, bc) in &dir_stats {
+            out.push_str(&format!("- `{dir}/` ({fc} files, {bc} blocks)\n"));
+        }
+    }
+
+    let symbols = store.get_exported_symbols(scope_arg)?;
+    if !symbols.is_empty() {
+        out.push_str("\n### Public API\n\n");
+        for symbol in symbols.iter().take(20) {
+            let path = symbol.file_path.as_deref().unwrap_or("unknown");
+            out.push_str(&format!(
+                "- **{}** ({}) in `{}`\n",
+                symbol.name, symbol.kind, path
+            ));
+        }
+        if symbols.len() > 20 {
+            out.push_str(&format!("- ... and {} more\n", symbols.len() - 20));
+        }
+    }
+
+    let mut entry_paths: Vec<String> = symbols
+        .iter()
+        .filter_map(|s| {
+            let path = s.file_path.as_deref()?;
+            let filename = path.rsplit('/').next().unwrap_or(path);
+            ENTRY_POINT_PREFIXES
+                .iter()
+                .any(|prefix| filename.starts_with(prefix))
+                .then(|| path.to_string())
+        })
+        .collect();
+    entry_paths.sort();
+    entry_paths.dedup();
+
+    if !entry_paths.is_empty() {
+        out.push_str("\n### Entry Points\n\n");
+        for path in &entry_paths {
+            out.push_str(&format!("- `{path}`\n"));
+        }
+    }
+
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -411,13 +496,39 @@ mod tests {
     #[tokio::test]
     async fn test_ts_overview() {
         let server = setup_server();
-        let params = Parameters(TsOverviewParams {});
+        let params = Parameters(TsOverviewParams {
+            scope: None,
+            depth: None,
+        });
         let result = server.ts_overview(params).await.unwrap();
         let text = text_content(&result);
-        assert!(text.contains("Project Overview"));
-        assert!(text.contains("/test"));
-        assert!(text.contains("Indexed files"));
-        assert!(text.contains("Code blocks"));
+        assert!(text.contains("Project Overview"), "should contain header");
+        assert!(text.contains("/test"), "should contain root path");
+        assert!(text.contains("Languages"), "should contain language stats");
+        assert!(text.contains("typescript"), "should list typescript language");
+        assert!(text.contains("Module Structure"), "should contain module structure");
+        assert!(text.contains("Public API"), "should list public API symbols");
+        assert!(text.contains("authenticateUser"), "should list authenticateUser");
+    }
+
+    #[tokio::test]
+    async fn test_ts_overview_uses_cache() {
+        let server = setup_server();
+
+        // First call populates cache
+        let params = Parameters(TsOverviewParams {
+            scope: None,
+            depth: None,
+        });
+        let first = text_content(&server.ts_overview(params).await.unwrap());
+
+        // Second call should return cached content
+        let params = Parameters(TsOverviewParams {
+            scope: None,
+            depth: None,
+        });
+        let second = text_content(&server.ts_overview(params).await.unwrap());
+        assert_eq!(first, second);
     }
 }
 
