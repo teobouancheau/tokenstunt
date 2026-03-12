@@ -17,8 +17,23 @@ impl LanguageExtractor for PythonExtractor {
         symbols
     }
 
-    fn extract_references(&self, _root: Node<'_>, _source: &[u8]) -> Vec<RawReference> {
-        vec![]
+    fn extract_references(&self, root: Node<'_>, source: &[u8]) -> Vec<RawReference> {
+        let mut refs = Vec::new();
+        let mut cursor = root.walk();
+
+        for child in root.children(&mut cursor) {
+            match child.kind() {
+                "import_statement" => {
+                    extract_plain_import(child, source, &mut refs);
+                }
+                "import_from_statement" => {
+                    extract_from_import(child, source, &mut refs);
+                }
+                _ => {}
+            }
+        }
+
+        refs
     }
 }
 
@@ -152,4 +167,101 @@ fn extract_assignment(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
         }
     }
     None
+}
+
+fn extract_plain_import(node: Node<'_>, source: &[u8], out: &mut Vec<RawReference>) {
+    let line = node.start_position().row as u32 + 1;
+    let mut cursor = node.walk();
+
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "dotted_name" => {
+                let name = node_text(child, source);
+                out.push(RawReference {
+                    source_symbol: String::new(),
+                    target_name: name,
+                    kind: "import",
+                    line,
+                });
+            }
+            "aliased_import" => {
+                let alias = child.child_by_field_name("alias");
+                let target = if let Some(a) = alias {
+                    node_text(a, source)
+                } else if let Some(n) = child.child_by_field_name("name") {
+                    node_text(n, source)
+                } else {
+                    continue;
+                };
+                out.push(RawReference {
+                    source_symbol: String::new(),
+                    target_name: target,
+                    kind: "import",
+                    line,
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
+fn extract_from_import(node: Node<'_>, source: &[u8], out: &mut Vec<RawReference>) {
+    let line = node.start_position().row as u32 + 1;
+    let mut cursor = node.walk();
+    let mut found_names = false;
+
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "dotted_name" => {
+                if found_names {
+                    continue;
+                }
+                // Skip module_name field, we want the imported names
+            }
+            "aliased_import" => {
+                found_names = true;
+                let alias = child.child_by_field_name("alias");
+                let target = if let Some(a) = alias {
+                    node_text(a, source)
+                } else if let Some(n) = child.child_by_field_name("name") {
+                    node_text(n, source)
+                } else {
+                    continue;
+                };
+                out.push(RawReference {
+                    source_symbol: String::new(),
+                    target_name: target,
+                    kind: "import",
+                    line,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    // If no aliased imports found, extract names after "import" keyword
+    if !found_names {
+        extract_from_import_names(node, source, line, out);
+    }
+}
+
+fn extract_from_import_names(node: Node<'_>, source: &[u8], line: u32, out: &mut Vec<RawReference>) {
+    let mut cursor = node.walk();
+    let mut past_import = false;
+
+    for child in node.children(&mut cursor) {
+        if child.kind() == "import" {
+            past_import = true;
+            continue;
+        }
+        if past_import && child.kind() == "dotted_name" {
+            let name = node_text(child, source);
+            out.push(RawReference {
+                source_symbol: String::new(),
+                target_name: name,
+                kind: "import",
+                line,
+            });
+        }
+    }
 }

@@ -1011,4 +1011,135 @@ enum Status {
         assert_eq!(result.symbols.len(), 1);
         assert!(result.references.is_empty());
     }
+
+    #[test]
+    fn test_typescript_import_extraction() {
+        let src = r#"
+import { UserService } from './services';
+import { Config } from '../config';
+
+export function handler(req: Request) {
+    const service = new UserService();
+    return service.handle(req);
+}
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::TypeScript).unwrap();
+        let ref_names: Vec<&str> = result
+            .references
+            .iter()
+            .map(|r| r.target_name.as_str())
+            .collect();
+        assert!(
+            ref_names.contains(&"UserService"),
+            "missing UserService, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"Config"),
+            "missing Config, got: {ref_names:?}"
+        );
+        assert!(result.references.iter().all(|r| r.kind == "import"));
+        assert!(result
+            .references
+            .iter()
+            .all(|r| r.source_symbol.is_empty()));
+    }
+
+    #[test]
+    fn test_typescript_default_and_namespace_imports() {
+        let src = r#"
+import React from 'react';
+import * as utils from './utils';
+import { useState, useEffect } from 'react';
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::TypeScript).unwrap();
+        let ref_names: Vec<&str> = result
+            .references
+            .iter()
+            .map(|r| r.target_name.as_str())
+            .collect();
+        assert!(
+            ref_names.contains(&"React"),
+            "missing React, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"utils"),
+            "missing utils, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"useState"),
+            "missing useState, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"useEffect"),
+            "missing useEffect, got: {ref_names:?}"
+        );
+    }
+
+    #[test]
+    fn test_python_import_extraction() {
+        let src = r#"
+from services import UserService
+import config
+
+def handler(request):
+    service = UserService()
+    return service.handle(request)
+"#;
+        let result = make_extractor().extract(src, Language::Python).unwrap();
+        let ref_names: Vec<&str> = result
+            .references
+            .iter()
+            .map(|r| r.target_name.as_str())
+            .collect();
+        assert!(
+            ref_names.contains(&"UserService"),
+            "missing UserService, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"config"),
+            "missing config, got: {ref_names:?}"
+        );
+        assert!(result.references.iter().all(|r| r.kind == "import"));
+        assert!(result
+            .references
+            .iter()
+            .all(|r| r.source_symbol.is_empty()));
+    }
+
+    #[test]
+    fn test_python_multiple_from_imports() {
+        let src = r#"
+from os.path import join, exists
+import json
+from typing import Optional, List
+"#;
+        let result = make_extractor().extract(src, Language::Python).unwrap();
+        let ref_names: Vec<&str> = result
+            .references
+            .iter()
+            .map(|r| r.target_name.as_str())
+            .collect();
+        assert!(
+            ref_names.contains(&"join"),
+            "missing join, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"exists"),
+            "missing exists, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"json"),
+            "missing json, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"Optional"),
+            "missing Optional, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"List"),
+            "missing List, got: {ref_names:?}"
+        );
+    }
 }

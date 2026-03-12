@@ -17,8 +17,24 @@ impl LanguageExtractor for TypeScriptExtractor {
         symbols
     }
 
-    fn extract_references(&self, _root: Node<'_>, _source: &[u8]) -> Vec<RawReference> {
-        vec![]
+    fn extract_references(&self, root: Node<'_>, source: &[u8]) -> Vec<RawReference> {
+        let mut refs = Vec::new();
+        let mut cursor = root.walk();
+
+        for child in root.children(&mut cursor) {
+            if child.kind() == "import_statement" {
+                extract_import_refs(child, source, &mut refs);
+            } else if child.kind() == "export_statement" {
+                let mut inner_cursor = child.walk();
+                for inner in child.children(&mut inner_cursor) {
+                    if inner.kind() == "import_statement" {
+                        extract_import_refs(inner, source, &mut refs);
+                    }
+                }
+            }
+        }
+
+        refs
     }
 }
 
@@ -210,6 +226,76 @@ fn extract_variable_decl(node: Node<'_>, source: &[u8], out: &mut Vec<ParsedSymb
                 signature,
                 children: vec![],
             });
+        }
+    }
+}
+
+fn extract_import_refs(node: Node<'_>, source: &[u8], out: &mut Vec<RawReference>) {
+    let line = node.start_position().row as u32 + 1;
+    let mut cursor = node.walk();
+
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "import_clause" => {
+                collect_import_names(child, source, line, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_import_names(node: Node<'_>, source: &[u8], line: u32, out: &mut Vec<RawReference>) {
+    match node.kind() {
+        "identifier" => {
+            let name = node_text(node, source);
+            out.push(RawReference {
+                source_symbol: String::new(),
+                target_name: name,
+                kind: "import",
+                line,
+            });
+        }
+        "named_imports" => {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "import_specifier" {
+                    let alias = child.child_by_field_name("alias");
+                    let name_node = if alias.is_some() {
+                        alias
+                    } else {
+                        child.child_by_field_name("name")
+                    };
+                    if let Some(n) = name_node {
+                        let name = node_text(n, source);
+                        out.push(RawReference {
+                            source_symbol: String::new(),
+                            target_name: name,
+                            kind: "import",
+                            line,
+                        });
+                    }
+                }
+            }
+        }
+        "namespace_import" => {
+            let mut ns_cursor = node.walk();
+            for child in node.children(&mut ns_cursor) {
+                if child.kind() == "identifier" {
+                    let name = node_text(child, source);
+                    out.push(RawReference {
+                        source_symbol: String::new(),
+                        target_name: name,
+                        kind: "import",
+                        line,
+                    });
+                }
+            }
+        }
+        _ => {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                collect_import_names(child, source, line, out);
+            }
         }
     }
 }
