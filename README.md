@@ -4,7 +4,7 @@ AST-level code intelligence MCP server for Claude Code. Indexes your codebase in
 
 ## What it does
 
-TokenStunt parses your source code with tree-sitter, extracts every function, class, interface, trait, enum, and constant, stores them in a SQLite FTS5 index, and serves them through 4 MCP tools:
+TokenStunt parses your source code with tree-sitter, extracts every function, class, interface, trait, enum, and constant, stores them in a SQLite FTS5 index, and serves them through 6 MCP tools:
 
 | Tool | Description |
 |------|-------------|
@@ -12,6 +12,8 @@ TokenStunt parses your source code with tree-sitter, extracts every function, cl
 | `ts_symbol` | Exact symbol lookup by name. Returns the full definition. |
 | `ts_context` | Symbol definition + dependency graph. Shows what a symbol calls and what calls it. |
 | `ts_overview` | Project structure: module tree, language breakdown, public API surface, entry points. |
+| `ts_setup` | Project diagnostics: index health, languages, embeddings status. |
+| `ts_impact` | Blast radius analysis: dependents and affected files before refactoring. |
 
 ## Supported languages
 
@@ -19,32 +21,19 @@ TokenStunt parses your source code with tree-sitter, extracts every function, cl
 
 **Optional (feature-gated):** Swift (`lang-swift`), Kotlin (`lang-kotlin`), Dart (`lang-dart`)
 
-## Quick start
+## Install
 
-```bash
-# Build
-cargo build --release
+### Claude Code plugin (recommended)
 
-# Index a project
-tokenstunt index --root /path/to/your/project
-
-# Start the MCP server
-tokenstunt serve --root /path/to/your/project
+```
+/plugin install teobouancheau/tokenstunt
 ```
 
-### Claude Code integration
+### Manual
 
-Add to your Claude Code MCP config (`~/.claude/claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "tokenstunt": {
-      "command": "/path/to/tokenstunt",
-      "args": ["serve", "--root", "/path/to/your/project"]
-    }
-  }
-}
+```bash
+cargo build --release
+tokenstunt serve --root /path/to/your/project
 ```
 
 ## Features
@@ -59,10 +48,10 @@ Import statements are extracted from TypeScript and Python files. The dependency
 
 ### Semantic search (optional)
 
-Configure a local embedding model (Ollama, LM Studio, or any OpenAI-compatible endpoint) for hybrid BM25 + cosine ranking:
+Configure a local embedding model (Ollama, LM Studio, or any OpenAI-compatible endpoint) for hybrid BM25 + cosine ranking. Run `/tokenstunt:configure` in Claude Code, or create the config manually:
 
 ```toml
-# .tokenstunt/config.toml
+# ~/.cache/tokenstunt/<project>/config.toml
 [embeddings]
 enabled = true
 provider = "ollama"           # or "openai-compat"
@@ -76,6 +65,10 @@ Without embeddings, search uses pure BM25 keyword ranking.
 ### Startup reconciliation
 
 On every `serve` startup, TokenStunt compares file hashes against the stored index and only re-indexes what changed. Cold starts are fast.
+
+### Transparent storage
+
+All data (index database, config) is stored in `~/.cache/tokenstunt/` — nothing is created in your project directory.
 
 ## Architecture
 
