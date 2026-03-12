@@ -13,6 +13,8 @@ rmcp = { version = "1", features = ["server", "transport-io"] }
 tokenstunt-index = { path = "../tokenstunt-index" }
 tokenstunt-store = { path = "../tokenstunt-store" }
 clap = { version = "4", features = ["derive"] }
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
 tokio.workspace = true
 anyhow.workspace = true
 tracing.workspace = true

@@ -1,3 +1,5 @@
+mod config;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -73,6 +75,10 @@ async fn main() -> Result<()> {
             init_logging_stderr();
 
             let root = resolve_root(root)?;
+            let cfg = config::Config::load(&root)?;
+            if cfg.embeddings.as_ref().is_some_and(|e| e.enabled) {
+                info!("embeddings enabled");
+            }
             let db_path = resolve_db(db, &root);
 
             if let Some(parent) = db_path.parent() {
@@ -126,6 +132,10 @@ async fn main() -> Result<()> {
             init_logging_stderr();
 
             let root = resolve_root(root)?;
+            let cfg = config::Config::load(&root)?;
+            if cfg.embeddings.as_ref().is_some_and(|e| e.enabled) {
+                info!("embeddings enabled");
+            }
             let db_path = resolve_db(db, &root);
 
             if let Some(parent) = db_path.parent() {
