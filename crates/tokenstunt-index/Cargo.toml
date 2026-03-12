@@ -13,6 +13,7 @@ thiserror.workspace = true
 tracing.workspace = true
 serde.workspace = true
 ignore = "0.4"
+notify = "7"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [dev-dependencies]
