@@ -55,14 +55,11 @@ fn resolve_db(db: Option<PathBuf>, root: &std::path::Path) -> PathBuf {
     db.unwrap_or_else(|| root.join(".tokenstunt").join("index.db"))
 }
 
-fn env_filter() -> tracing_subscriber::EnvFilter {
-    tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("tokenstunt=info"))
-}
-
-fn init_logging_stderr() {
+fn init_logging(default_level: &str) {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_level));
     tracing_subscriber::fmt()
-        .with_env_filter(env_filter())
+        .with_env_filter(filter)
         .with_writer(std::io::stderr)
         .init();
 }
@@ -99,7 +96,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Serve { root, db } => {
-            init_logging_stderr();
+            init_logging("tokenstunt=warn");
 
             let root = resolve_root(root)?;
             let cfg = config::Config::load(&root)?;
@@ -139,7 +136,8 @@ async fn main() -> Result<()> {
             let _watcher = tokenstunt_index::FileWatcher::start(Arc::clone(&indexer), root.clone())?;
             info!("file watcher started");
 
-            let server = tokenstunt_server::TokenStuntServer::new(Arc::clone(&indexer), root);
+            let has_embeddings = indexer.embedder().is_some();
+            let server = tokenstunt_server::TokenStuntServer::new(Arc::clone(&indexer), root, has_embeddings);
 
             info!("starting MCP server on stdio");
             let transport = rmcp::transport::io::stdio();
@@ -154,7 +152,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Index { root, db } => {
-            init_logging_stderr();
+            init_logging("tokenstunt=info");
 
             let root = resolve_root(root)?;
             let cfg = config::Config::load(&root)?;

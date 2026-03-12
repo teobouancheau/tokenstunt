@@ -4,7 +4,7 @@ use std::sync::Arc;
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
-use rmcp::{schemars, tool, tool_router, ErrorData as McpError};
+use rmcp::{schemars, tool, tool_handler, tool_router, ErrorData as McpError};
 use serde::Deserialize;
 use tokenstunt_index::Indexer;
 use tokenstunt_search::{SearchEngine, SearchQuery};
@@ -17,6 +17,7 @@ use crate::format;
 pub struct TokenStuntServer {
     indexer: Arc<Indexer>,
     root: PathBuf,
+    has_embeddings: bool,
     tool_router: ToolRouter<Self>,
 }
 
@@ -58,19 +59,31 @@ struct TsOverviewParams {
     depth: Option<i32>,
 }
 
+#[derive(Deserialize, schemars::JsonSchema)]
+struct TsSetupParams {}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct TsImpactParams {
+    /// Symbol name to analyze blast radius for
+    symbol: String,
+    /// Max traversal depth (default: 3, max: 5)
+    max_depth: Option<u32>,
+}
+
 #[tool_router]
 impl TokenStuntServer {
-    pub fn new(indexer: Arc<Indexer>, root: PathBuf) -> Self {
+    pub fn new(indexer: Arc<Indexer>, root: PathBuf, has_embeddings: bool) -> Self {
         Self {
             indexer,
             root,
+            has_embeddings,
             tool_router: Self::tool_router(),
         }
     }
 
     #[tool(
         name = "ts_search",
-        description = "Code search across indexed symbols. Returns ranked code blocks (exact function/class/type bodies), not full files."
+        description = "Semantic code search — returns exact function/class/type bodies ranked by relevance. Use instead of Grep+Read when searching by concept or keyword. Saves 95% tokens vs reading full files."
     )]
     async fn ts_search(
         &self,
@@ -108,7 +121,7 @@ impl TokenStuntServer {
 
     #[tool(
         name = "ts_symbol",
-        description = "Exact symbol lookup by name. Returns the full definition of a function, class, or type."
+        description = "Exact symbol lookup by name — returns the full definition with file path and line numbers. Faster than Grep for known symbol names."
     )]
     async fn ts_symbol(
         &self,
@@ -136,7 +149,7 @@ impl TokenStuntServer {
 
     #[tool(
         name = "ts_context",
-        description = "Symbol definition + dependency graph. Shows what this symbol calls and what calls it."
+        description = "Symbol definition + dependency graph — shows what this symbol calls and what calls it. Use to understand coupling before modifying code."
     )]
     async fn ts_context(
         &self,
@@ -196,7 +209,7 @@ impl TokenStuntServer {
 
     #[tool(
         name = "ts_overview",
-        description = "Project structure: module tree, language breakdown, public API surface, and entry points."
+        description = "Project structure overview — module tree, language breakdown, public API surface, and entry points. Start here to orient in an unfamiliar codebase."
     )]
     async fn ts_overview(
         &self,
@@ -219,6 +232,44 @@ impl TokenStuntServer {
 
         let _ = store.set_overview_cache(scope, depth, &output);
 
+        Ok(CallToolResult::success(vec![Content::text(output)]))
+    }
+
+    #[tool(
+        name = "ts_setup",
+        description = "Project diagnostics: index health, languages, embeddings status, and configuration guidance."
+    )]
+    async fn ts_setup(
+        &self,
+        _params: Parameters<TsSetupParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let report = crate::setup::build_setup_report(
+            self.indexer.store(),
+            &self.root,
+            self.has_embeddings,
+        )
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(report)]))
+    }
+
+    #[tool(
+        name = "ts_impact",
+        description = "Blast radius analysis: shows all symbols and files affected by changing a given symbol. Use before refactoring."
+    )]
+    async fn ts_impact(
+        &self,
+        params: Parameters<TsImpactParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = params.0;
+        let result = crate::impact::walk_dependents(
+            self.indexer.store(),
+            &p.symbol,
+            p.max_depth,
+        )
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
+        let output = crate::impact::format_impact(&result);
         Ok(CallToolResult::success(vec![Content::text(output)]))
     }
 }
@@ -357,7 +408,7 @@ mod tests {
             .unwrap();
 
         let indexer = Arc::new(tokenstunt_index::Indexer::new(store, None).unwrap());
-        TokenStuntServer::new(indexer, PathBuf::from("/test"))
+        TokenStuntServer::new(indexer, PathBuf::from("/test"), false)
     }
 
     fn text_content(result: &CallToolResult) -> String {
@@ -376,7 +427,7 @@ mod tests {
     fn test_server_info() {
         let store = Store::open_in_memory().unwrap();
         let indexer = Arc::new(tokenstunt_index::Indexer::new(store, None).unwrap());
-        let server = TokenStuntServer::new(indexer, PathBuf::from("/test"));
+        let server = TokenStuntServer::new(indexer, PathBuf::from("/test"), false);
         let info = server.get_info();
 
         assert_eq!(info.server_info.name, "tokenstunt");
@@ -532,6 +583,7 @@ mod tests {
     }
 }
 
+#[tool_handler]
 impl rmcp::handler::server::ServerHandler for TokenStuntServer {
     fn get_info(&self) -> InitializeResult {
         let capabilities = ServerCapabilities::builder()
@@ -545,7 +597,7 @@ impl rmcp::handler::server::ServerHandler for TokenStuntServer {
                     .with_description("Smart code search for Claude Code. Finds the exact code you need — saves 95% of tokens.")
             )
             .with_instructions(
-                "TokenStunt provides AST-level semantic code search. Use ts_search for natural language queries, ts_symbol for exact lookups, ts_context for dependency graphs, ts_overview for project summaries."
+                "TokenStunt provides AST-level semantic code search. Use ts_search instead of Grep+Read when looking for code by concept — it returns exact symbol bodies, saving 95% of tokens. Use ts_symbol for exact name lookups. Use ts_context to understand what a symbol calls and what calls it. Use ts_impact before refactoring to understand blast radius. Use ts_overview to orient in the project. Use ts_setup to check index health. Only use Read for files you need to modify. Recommended workflow: ts_overview → ts_search → ts_symbol → ts_context/ts_impact → Read."
             )
     }
 }
