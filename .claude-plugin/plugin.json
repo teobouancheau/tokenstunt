@@ -14,17 +14,5 @@
       "command": "${CLAUDE_PLUGIN_ROOT}/bin/tokenstunt",
       "args": ["serve"]
     }
-  },
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/install.sh"
-          }
-        ]
-      }
-    ]
   }
 }
