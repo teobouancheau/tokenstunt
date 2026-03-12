@@ -23,3 +23,5 @@ model/
 .mcp.json
 # Plugin binary (downloaded at install time)
 .claude-plugin/bin/
+# Internal docs
+docs/superpowers/
