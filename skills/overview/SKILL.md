@@ -1,5 +1,5 @@
 ---
-name: overview
+name: tokenstunt-overview
 description: Project structure — module tree, languages, public API, entry points
 ---
 
