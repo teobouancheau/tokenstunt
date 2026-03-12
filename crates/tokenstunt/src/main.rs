@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
             }
 
             let store = tokenstunt_store::Store::open(&db_path)?;
-            let indexer = tokenstunt_index::Indexer::new(store)?;
+            let indexer = Arc::new(tokenstunt_index::Indexer::new(store)?);
 
             info!(root = %root.display(), db = %db_path.display(), "indexing");
             let stats = indexer.index_directory(&root)?;
@@ -91,7 +91,24 @@ async fn main() -> Result<()> {
                 "index ready"
             );
 
-            let server = tokenstunt_server::TokenStuntServer::new(Arc::new(indexer), root);
+            let root_str = root.to_str().context("non-UTF-8 path")?;
+            let repo_name = root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown");
+            let repo_id = indexer.store().ensure_repo(root_str, repo_name)?;
+            let reconcile_stats = indexer.reconcile(&root, repo_id)?;
+            info!(
+                updated = reconcile_stats.updated,
+                unchanged = reconcile_stats.unchanged,
+                deleted = reconcile_stats.deleted,
+                "reconciliation complete"
+            );
+
+            let _watcher = tokenstunt_index::FileWatcher::start(Arc::clone(&indexer), root.clone())?;
+            info!("file watcher started");
+
+            let server = tokenstunt_server::TokenStuntServer::new(Arc::clone(&indexer), root);
 
             info!("starting MCP server on stdio");
             let transport = rmcp::transport::io::stdio();
