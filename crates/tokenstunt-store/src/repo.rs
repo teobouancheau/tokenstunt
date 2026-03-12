@@ -392,6 +392,71 @@ impl Store {
         Ok(())
     }
 
+    pub fn delete_block_dependencies(&self, block_id: i64) -> Result<()> {
+        let conn = self.write_lock()?;
+        self.delete_block_dependencies_with_conn(&conn, block_id)
+    }
+
+    pub fn delete_block_dependencies_with_conn(
+        &self,
+        conn: &Connection,
+        block_id: i64,
+    ) -> Result<()> {
+        conn.execute(
+            "DELETE FROM dependencies WHERE source_block_id = ?1",
+            params![block_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_unresolved_dependencies(&self) -> Result<Vec<(i64, String, String)>> {
+        let conn = self.read_lock()?;
+        self.get_unresolved_dependencies_with_conn(&conn)
+    }
+
+    pub fn get_unresolved_dependencies_with_conn(
+        &self,
+        conn: &Connection,
+    ) -> Result<Vec<(i64, String, String)>> {
+        let mut stmt = conn.prepare(
+            "SELECT source_block_id, target_name, kind
+             FROM dependencies
+             WHERE resolved = 0",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn resolve_dependency(
+        &self,
+        source_block_id: i64,
+        target_name: &str,
+        target_block_id: i64,
+    ) -> Result<()> {
+        let conn = self.write_lock()?;
+        self.resolve_dependency_with_conn(&conn, source_block_id, target_name, target_block_id)
+    }
+
+    pub fn resolve_dependency_with_conn(
+        &self,
+        conn: &Connection,
+        source_block_id: i64,
+        target_name: &str,
+        target_block_id: i64,
+    ) -> Result<()> {
+        conn.execute(
+            "UPDATE dependencies
+             SET target_block_id = ?1, resolved = 1
+             WHERE source_block_id = ?2 AND target_name = ?3",
+            params![target_block_id, source_block_id, target_name],
+        )?;
+        Ok(())
+    }
+
     pub fn file_count(&self) -> Result<i64> {
         let conn = self.read_lock()?;
         let count: i64 =
@@ -738,6 +803,59 @@ mod tests {
             .unwrap();
 
         assert_eq!(store.block_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_delete_block_dependencies() {
+        let f = setup();
+        let target_id = f
+            .store
+            .insert_code_block(
+                f.file_id,
+                "helper",
+                CodeBlockKind::Function,
+                10,
+                15,
+                "fn helper() {}",
+                "fn helper()",
+                None,
+            )
+            .unwrap();
+        f.store
+            .insert_dependency(f.block_id, Some(target_id), "helper", "call")
+            .unwrap();
+        f.store.delete_block_dependencies(f.block_id).unwrap();
+        let deps = f.store.get_dependencies(f.block_id).unwrap();
+        assert!(deps.is_empty());
+    }
+
+    #[test]
+    fn test_get_unresolved_and_resolve() {
+        let f = setup();
+        f.store
+            .insert_dependency(f.block_id, None, "unknown", "import")
+            .unwrap();
+        let unresolved = f.store.get_unresolved_dependencies().unwrap();
+        assert_eq!(unresolved.len(), 1);
+
+        let target_id = f
+            .store
+            .insert_code_block(
+                f.file_id,
+                "unknown",
+                CodeBlockKind::Function,
+                10,
+                15,
+                "fn unknown() {}",
+                "fn unknown()",
+                None,
+            )
+            .unwrap();
+        f.store
+            .resolve_dependency(f.block_id, "unknown", target_id)
+            .unwrap();
+        let unresolved = f.store.get_unresolved_dependencies().unwrap();
+        assert!(unresolved.is_empty());
     }
 
     #[test]
