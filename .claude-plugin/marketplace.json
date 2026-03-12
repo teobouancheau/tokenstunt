@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "tokenstunt",
-      "source": ".",
+      "source": "./",
       "description": "AST-level semantic code search. Returns exact functions and classes instead of entire files, cutting token usage by 95%.",
       "author": {
         "name": "Teo Bouancheau"
