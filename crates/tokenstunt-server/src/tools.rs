@@ -356,7 +356,7 @@ mod tests {
             .insert_dependency(auth_id, Some(validate_id), "validateToken", "call")
             .unwrap();
 
-        let indexer = Arc::new(tokenstunt_index::Indexer::new(store).unwrap());
+        let indexer = Arc::new(tokenstunt_index::Indexer::new(store, None).unwrap());
         TokenStuntServer::new(indexer, PathBuf::from("/test"))
     }
 
@@ -375,7 +375,7 @@ mod tests {
     #[test]
     fn test_server_info() {
         let store = Store::open_in_memory().unwrap();
-        let indexer = Arc::new(tokenstunt_index::Indexer::new(store).unwrap());
+        let indexer = Arc::new(tokenstunt_index::Indexer::new(store, None).unwrap());
         let server = TokenStuntServer::new(indexer, PathBuf::from("/test"));
         let info = server.get_info();
 

@@ -1,10 +1,12 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use tracing::{info, warn};
 use xxhash_rust::xxh3::xxh3_64;
 
+use tokenstunt_embeddings::EmbeddingProvider;
 use tokenstunt_parser::{Language, LanguageRegistry, ParsedSymbol, SymbolExtractor};
 use tokenstunt_store::{CodeBlockKind, Connection, Store};
 
@@ -13,17 +15,26 @@ use crate::walker;
 pub struct Indexer {
     store: Store,
     extractor: SymbolExtractor,
+    embedder: Option<Arc<dyn EmbeddingProvider>>,
 }
 
 impl Indexer {
-    pub fn new(store: Store) -> Result<Self> {
+    pub fn new(store: Store, embedder: Option<Arc<dyn EmbeddingProvider>>) -> Result<Self> {
         let registry = LanguageRegistry::new()?;
         let extractor = SymbolExtractor::new(registry);
-        Ok(Self { store, extractor })
+        Ok(Self {
+            store,
+            extractor,
+            embedder,
+        })
     }
 
     pub fn store(&self) -> &Store {
         &self.store
+    }
+
+    pub fn embedder(&self) -> Option<&Arc<dyn EmbeddingProvider>> {
+        self.embedder.as_ref()
     }
 
     pub fn index_directory(&self, root: &Path) -> Result<IndexStats> {
@@ -41,6 +52,8 @@ impl Indexer {
         info!(files = entries.len(), "discovered files");
 
         let registry = LanguageRegistry::new()?;
+
+        let mut embedding_work: Vec<(i64, String)> = Vec::new();
 
         let stats = self.store.write_transaction(|conn| {
             let mut stats = IndexStats::default();
@@ -114,6 +127,7 @@ impl Indexer {
                         first_block_id = Some(block_id);
                     }
                     block_ids.push((symbol.name.clone(), block_id));
+                    collect_embedding_work(symbol, block_id, &mut embedding_work);
                     stats.blocks += count_symbols(symbol);
                 }
 
@@ -153,6 +167,16 @@ impl Indexer {
             Ok(stats)
         })?;
 
+        if !embedding_work.is_empty() {
+            if let Some(embedder) = &self.embedder {
+                spawn_embedding_task(
+                    self.store.db_path().to_path_buf(),
+                    Arc::clone(embedder),
+                    embedding_work,
+                );
+            }
+        }
+
         info!(
             files = stats.files,
             blocks = stats.blocks,
@@ -168,6 +192,7 @@ impl Indexer {
     pub fn reconcile(&self, root: &Path, repo_id: i64) -> Result<ReconcileStats> {
         let entries = walker::walk_directory(root)?;
         let registry = LanguageRegistry::new()?;
+        let mut embedding_work: Vec<(i64, String)> = Vec::new();
 
         let stats = self.store.write_transaction(|conn| {
             let mut stats = ReconcileStats::default();
@@ -215,6 +240,7 @@ impl Indexer {
 
                 self.index_file_with_conn(
                     conn, repo_id, root, &entry.path, &rel_path, entry.language, &source,
+                    &mut embedding_work,
                 )?;
                 stats.updated += 1;
             }
@@ -231,6 +257,16 @@ impl Indexer {
 
             Ok(stats)
         })?;
+
+        if !embedding_work.is_empty() {
+            if let Some(embedder) = &self.embedder {
+                spawn_embedding_task(
+                    self.store.db_path().to_path_buf(),
+                    Arc::clone(embedder),
+                    embedding_work,
+                );
+            }
+        }
 
         info!(
             updated = stats.updated,
@@ -250,6 +286,7 @@ impl Indexer {
             .unwrap_or("unknown");
 
         let registry = LanguageRegistry::new()?;
+        let mut embedding_work: Vec<(i64, String)> = Vec::new();
 
         let stats = self.store.write_transaction(|conn| {
             let repo_id = self.store.ensure_repo_with_conn(conn, root_str, repo_name)?;
@@ -305,6 +342,7 @@ impl Indexer {
 
                 self.index_file_with_conn(
                     conn, repo_id, root, path, &rel_path, language, &source,
+                    &mut embedding_work,
                 )?;
                 stats.reindexed += 1;
 
@@ -313,6 +351,16 @@ impl Indexer {
 
             Ok(stats)
         })?;
+
+        if !embedding_work.is_empty() {
+            if let Some(embedder) = &self.embedder {
+                spawn_embedding_task(
+                    self.store.db_path().to_path_buf(),
+                    Arc::clone(embedder),
+                    embedding_work,
+                );
+            }
+        }
 
         info!(
             reindexed = stats.reindexed,
@@ -334,6 +382,7 @@ impl Indexer {
         rel_path: &str,
         language: Language,
         source: &str,
+        embedding_work: &mut Vec<(i64, String)>,
     ) -> Result<()> {
         let content_hash = xxh3_64(source.as_bytes());
         let mtime = std::fs::metadata(abs_path)
@@ -371,6 +420,7 @@ impl Indexer {
                 first_block_id = Some(block_id);
             }
             block_ids.push((symbol.name.clone(), block_id));
+            collect_embedding_work(symbol, block_id, embedding_work);
         }
 
         if let Some(fallback_id) = first_block_id {
@@ -448,6 +498,60 @@ fn count_symbols(symbol: &ParsedSymbol) -> u64 {
     1 + symbol.children.iter().map(count_symbols).sum::<u64>()
 }
 
+fn collect_embedding_work(
+    symbol: &ParsedSymbol,
+    block_id: i64,
+    work: &mut Vec<(i64, String)>,
+) {
+    if !symbol.content.is_empty() {
+        work.push((block_id, symbol.content.clone()));
+    }
+    // Children get their own block IDs during insertion, but we don't
+    // have them here. The parent content already covers children, so
+    // we skip nested symbols to avoid redundant embeddings.
+}
+
+fn spawn_embedding_task(
+    db_path: PathBuf,
+    embedder: Arc<dyn EmbeddingProvider>,
+    work: Vec<(i64, String)>,
+) {
+    tokio::spawn(async move {
+        let store = match tokenstunt_store::Store::open(&db_path) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(error = %e, "failed to open store for embedding task");
+                return;
+            }
+        };
+
+        let texts: Vec<String> = work.iter().map(|(_, text)| text.clone()).collect();
+        let batch_size = 32;
+
+        for chunk_start in (0..texts.len()).step_by(batch_size) {
+            let chunk_end = (chunk_start + batch_size).min(texts.len());
+            let batch = &texts[chunk_start..chunk_end];
+
+            match embedder.embed_batch(batch).await {
+                Ok(vectors) => {
+                    for (i, vector) in vectors.iter().enumerate() {
+                        let (block_id, _) = &work[chunk_start + i];
+                        if let Err(e) = store.insert_embedding(*block_id, vector, "default") {
+                            warn!(block_id, error = %e, "failed to store embedding");
+                        }
+                    }
+                    info!(count = vectors.len(), "embedded batch");
+                }
+                Err(e) => {
+                    warn!(error = %e, batch_size = batch.len(), "embedding batch failed");
+                }
+            }
+        }
+
+        info!(total = work.len(), "background embedding complete");
+    });
+}
+
 #[derive(Debug, Default)]
 pub struct IndexStats {
     pub files: u64,
@@ -499,7 +603,7 @@ mod tests {
         write_test_files(dir.path());
 
         let store = Store::open_in_memory().unwrap();
-        let indexer = Indexer::new(store).unwrap();
+        let indexer = Indexer::new(store, None).unwrap();
         let stats = indexer.index_directory(dir.path()).unwrap();
 
         assert!(stats.files >= 2);
@@ -515,7 +619,7 @@ mod tests {
         write_test_files(dir.path());
 
         let store = Store::open_in_memory().unwrap();
-        let indexer = Indexer::new(store).unwrap();
+        let indexer = Indexer::new(store, None).unwrap();
 
         let stats1 = indexer.index_directory(dir.path()).unwrap();
         assert!(stats1.files >= 2);
@@ -537,7 +641,7 @@ mod tests {
         .unwrap();
 
         let store = Store::open_in_memory().unwrap();
-        let indexer = Indexer::new(store).unwrap();
+        let indexer = Indexer::new(store, None).unwrap();
 
         indexer.index_directory(dir.path()).unwrap();
         let initial_count = indexer.store().block_count().unwrap();
@@ -571,7 +675,7 @@ mod tests {
         std::fs::write(src.join("math.py"), "def add(a, b):\n    return a + b\n").unwrap();
 
         let store = Store::open_in_memory().unwrap();
-        let indexer = Indexer::new(store).unwrap();
+        let indexer = Indexer::new(store, None).unwrap();
         indexer.index_directory(dir.path()).unwrap();
         assert!(indexer.store().file_count().unwrap() >= 2);
 
@@ -599,7 +703,7 @@ mod tests {
         .unwrap();
 
         let store = Store::open_in_memory().unwrap();
-        let indexer = Indexer::new(store).unwrap();
+        let indexer = Indexer::new(store, None).unwrap();
         indexer.index_directory(dir.path()).unwrap();
 
         let repo_id = indexer
@@ -624,7 +728,7 @@ mod tests {
         .unwrap();
 
         let store = Store::open_in_memory().unwrap();
-        let indexer = Indexer::new(store).unwrap();
+        let indexer = Indexer::new(store, None).unwrap();
         indexer.index_directory(dir.path()).unwrap();
 
         // Modify the file
@@ -653,7 +757,7 @@ mod tests {
         .unwrap();
 
         let store = Store::open_in_memory().unwrap();
-        let indexer = Indexer::new(store).unwrap();
+        let indexer = Indexer::new(store, None).unwrap();
         indexer.index_directory(dir.path()).unwrap();
 
         let stats = indexer
@@ -681,7 +785,7 @@ mod tests {
         .unwrap();
 
         let store = Store::open_in_memory().unwrap();
-        let indexer = Indexer::new(store).unwrap();
+        let indexer = Indexer::new(store, None).unwrap();
         indexer.index_directory(dir.path()).unwrap();
 
         let handler_blocks = indexer.store().lookup_symbol("handler", None).unwrap();

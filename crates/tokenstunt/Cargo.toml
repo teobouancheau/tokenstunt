@@ -21,6 +21,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 tokenstunt-search = { path = "../tokenstunt-search" }
 tokenstunt-parser = { path = "../tokenstunt-parser" }
+tokenstunt-embeddings = { path = "../tokenstunt-embeddings" }
 
 [dev-dependencies]
 tempfile = "3"

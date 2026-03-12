@@ -47,7 +47,7 @@ class Calculator:
     .unwrap();
 
     let store = Store::open_in_memory().unwrap();
-    let indexer = Indexer::new(store).unwrap();
+    let indexer = Indexer::new(store, None).unwrap();
     let stats = indexer.index_directory(dir.path()).unwrap();
 
     assert!(stats.files >= 2, "expected at least 2 files indexed");

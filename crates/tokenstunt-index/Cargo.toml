@@ -7,6 +7,7 @@ edition.workspace = true
 tokenstunt-store = { path = "../tokenstunt-store" }
 tokenstunt-parser = { path = "../tokenstunt-parser" }
 tokenstunt-search = { path = "../tokenstunt-search" }
+tokenstunt-embeddings = { path = "../tokenstunt-embeddings" }
 tokio.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true

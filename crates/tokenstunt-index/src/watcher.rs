@@ -77,7 +77,7 @@ mod tests {
         std::fs::write(src.join("greet.ts"), "export function greet() {}").unwrap();
 
         let store = Store::open_in_memory().unwrap();
-        let indexer = Arc::new(Indexer::new(store).unwrap());
+        let indexer = Arc::new(Indexer::new(store, None).unwrap());
         indexer.index_directory(dir.path()).unwrap();
 
         let _watcher = FileWatcher::start(Arc::clone(&indexer), dir.path().to_path_buf()).unwrap();
