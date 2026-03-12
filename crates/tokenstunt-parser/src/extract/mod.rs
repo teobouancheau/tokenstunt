@@ -5,6 +5,8 @@ mod java;
 mod python;
 mod ruby;
 mod rust_lang;
+#[cfg(feature = "lang-swift")]
+mod swift;
 mod typescript;
 
 use anyhow::{Context, Result};
@@ -17,6 +19,8 @@ use java::JavaExtractor;
 use python::PythonExtractor;
 use ruby::RubyExtractor;
 use rust_lang::RustExtractor;
+#[cfg(feature = "lang-swift")]
+use swift::SwiftExtractor;
 use typescript::TypeScriptExtractor;
 
 #[derive(Debug, Clone)]
@@ -117,6 +121,14 @@ impl SymbolExtractor {
             }
             Language::Ruby => {
                 let extractor = RubyExtractor;
+                (
+                    extractor.extract_symbols(root, source_bytes),
+                    extractor.extract_references(root, source_bytes),
+                )
+            }
+            #[cfg(feature = "lang-swift")]
+            Language::Swift => {
+                let extractor = SwiftExtractor;
                 (
                     extractor.extract_symbols(root, source_bytes),
                     extractor.extract_references(root, source_bytes),
@@ -725,6 +737,94 @@ end
         assert_eq!(result.symbols.len(), 1);
         assert_eq!(result.symbols[0].name, "process");
         assert_eq!(result.symbols[0].kind, "function");
+    }
+
+    #[cfg(feature = "lang-swift")]
+    #[test]
+    fn test_swift_class_function_protocol_enum() {
+        let src = r#"
+func greet(name: String) -> String {
+    return "Hello, \(name)!"
+}
+
+class UserService {
+    func getUser(id: String) -> User {
+        return users[id]
+    }
+
+    func deleteUser(id: String) {
+        users.removeValue(forKey: id)
+    }
+}
+
+struct Config {
+    var port: Int
+    var host: String
+}
+
+protocol Repository {
+    func findById(id: String) -> Entity
+    func save(entity: Entity)
+}
+
+enum Status {
+    case active
+    case inactive
+    case deleted
+}
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Swift).unwrap();
+        let names: Vec<&str> = result.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"greet"), "missing greet, got: {names:?}");
+        assert!(
+            names.contains(&"UserService"),
+            "missing UserService, got: {names:?}"
+        );
+        assert!(names.contains(&"Config"), "missing Config, got: {names:?}");
+        assert!(
+            names.contains(&"Repository"),
+            "missing Repository, got: {names:?}"
+        );
+        assert!(names.contains(&"Status"), "missing Status, got: {names:?}");
+
+        let greet = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "greet")
+            .unwrap();
+        assert_eq!(greet.kind, "function");
+
+        let class = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "UserService")
+            .unwrap();
+        assert_eq!(class.kind, "class");
+        assert_eq!(class.children.len(), 2);
+        assert_eq!(class.children[0].name, "getUser");
+        assert_eq!(class.children[0].kind, "method");
+
+        let config = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "Config")
+            .unwrap();
+        assert_eq!(config.kind, "struct");
+
+        let protocol = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "Repository")
+            .unwrap();
+        assert_eq!(protocol.kind, "interface");
+
+        let enm = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "Status")
+            .unwrap();
+        assert_eq!(enm.kind, "enum");
     }
 
     #[test]

@@ -74,6 +74,8 @@ pub struct LanguageRegistry {
     ts_c: tree_sitter::Language,
     ts_cpp: tree_sitter::Language,
     ts_ruby: tree_sitter::Language,
+    #[cfg(feature = "lang-swift")]
+    ts_swift: tree_sitter::Language,
 }
 
 impl LanguageRegistry {
@@ -88,6 +90,8 @@ impl LanguageRegistry {
             ts_c: tree_sitter_c::LANGUAGE.into(),
             ts_cpp: tree_sitter_cpp::LANGUAGE.into(),
             ts_ruby: tree_sitter_ruby::LANGUAGE.into(),
+            #[cfg(feature = "lang-swift")]
+            ts_swift: tree_sitter_swift::LANGUAGE.into(),
         })
     }
 
@@ -102,6 +106,8 @@ impl LanguageRegistry {
             Language::C => Ok(self.ts_c.clone()),
             Language::Cpp => Ok(self.ts_cpp.clone()),
             Language::Ruby => Ok(self.ts_ruby.clone()),
+            #[cfg(feature = "lang-swift")]
+            Language::Swift => Ok(self.ts_swift.clone()),
             other => bail!("language {:?} not yet supported", other),
         }
     }
@@ -119,7 +125,7 @@ impl LanguageRegistry {
                 | Language::C
                 | Language::Cpp
                 | Language::Ruby
-        )
+        ) || cfg!(feature = "lang-swift") && matches!(lang, Language::Swift)
     }
 }
 
