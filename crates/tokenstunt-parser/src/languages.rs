@@ -68,6 +68,7 @@ pub struct LanguageRegistry {
     ts_typescript: tree_sitter::Language,
     ts_tsx: tree_sitter::Language,
     ts_python: tree_sitter::Language,
+    ts_rust: tree_sitter::Language,
 }
 
 impl LanguageRegistry {
@@ -76,6 +77,7 @@ impl LanguageRegistry {
             ts_typescript: tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             ts_tsx: tree_sitter_typescript::LANGUAGE_TSX.into(),
             ts_python: tree_sitter_python::LANGUAGE.into(),
+            ts_rust: tree_sitter_rust::LANGUAGE.into(),
         })
     }
 
@@ -84,6 +86,7 @@ impl LanguageRegistry {
             Language::TypeScript => Ok(self.ts_typescript.clone()),
             Language::Tsx | Language::JavaScript => Ok(self.ts_tsx.clone()),
             Language::Python => Ok(self.ts_python.clone()),
+            Language::Rust => Ok(self.ts_rust.clone()),
             other => bail!("language {:?} not yet supported", other),
         }
     }
@@ -91,7 +94,11 @@ impl LanguageRegistry {
     pub fn is_supported(&self, lang: Language) -> bool {
         matches!(
             lang,
-            Language::TypeScript | Language::Tsx | Language::JavaScript | Language::Python
+            Language::TypeScript
+                | Language::Tsx
+                | Language::JavaScript
+                | Language::Python
+                | Language::Rust
         )
     }
 }
@@ -174,13 +181,7 @@ mod tests {
         assert!(registry.get_ts_language(Language::Tsx).is_ok());
         assert!(registry.get_ts_language(Language::JavaScript).is_ok());
         assert!(registry.get_ts_language(Language::Python).is_ok());
-
-        let err = registry.get_ts_language(Language::Rust);
-        assert!(err.is_err());
-        assert!(
-            err.unwrap_err().to_string().contains("not yet supported"),
-            "expected 'not yet supported' error for Rust"
-        );
+        assert!(registry.get_ts_language(Language::Rust).is_ok());
     }
 
     #[test]
@@ -190,7 +191,7 @@ mod tests {
         assert!(registry.is_supported(Language::Tsx));
         assert!(registry.is_supported(Language::JavaScript));
         assert!(registry.is_supported(Language::Python));
-        assert!(!registry.is_supported(Language::Rust));
+        assert!(registry.is_supported(Language::Rust));
         assert!(!registry.is_supported(Language::Go));
         assert!(!registry.is_supported(Language::Java));
     }

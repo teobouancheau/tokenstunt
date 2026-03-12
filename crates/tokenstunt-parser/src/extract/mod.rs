@@ -1,5 +1,6 @@
 mod helpers;
 mod python;
+mod rust_lang;
 mod typescript;
 
 use anyhow::{Context, Result};
@@ -7,6 +8,7 @@ use tree_sitter::{Node, Parser};
 
 use crate::languages::{Language, LanguageRegistry};
 use python::PythonExtractor;
+use rust_lang::RustExtractor;
 use typescript::TypeScriptExtractor;
 
 #[derive(Debug, Clone)]
@@ -72,6 +74,13 @@ impl SymbolExtractor {
             }
             Language::Python => {
                 let extractor = PythonExtractor;
+                (
+                    extractor.extract_symbols(root, source_bytes),
+                    extractor.extract_references(root, source_bytes),
+                )
+            }
+            Language::Rust => {
+                let extractor = RustExtractor;
                 (
                     extractor.extract_symbols(root, source_bytes),
                     extractor.extract_references(root, source_bytes),
@@ -189,6 +198,128 @@ mod tests {
         assert_eq!(symbols[0].name, "DataProcessor");
         assert_eq!(symbols[0].kind, "class");
         assert_eq!(symbols[0].children.len(), 2);
+    }
+
+    #[test]
+    fn test_rust_function_and_struct() {
+        let src = r#"
+use std::collections::HashMap;
+
+pub fn greet(name: &str) -> String {
+    format!("Hello, {name}!")
+}
+
+pub struct Config {
+    pub port: u16,
+    pub host: String,
+}
+
+impl Config {
+    pub fn new(port: u16, host: String) -> Self {
+        Self { port, host }
+    }
+}
+
+pub trait Service {
+    fn start(&self) -> Result<(), Box<dyn std::error::Error>>;
+}
+
+pub enum Status {
+    Running,
+    Stopped,
+    Error(String),
+}
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Rust).unwrap();
+        let names: Vec<&str> = result.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"greet"), "missing greet, got: {names:?}");
+        assert!(names.contains(&"Config"), "missing Config, got: {names:?}");
+        assert!(
+            names.contains(&"Service"),
+            "missing Service, got: {names:?}"
+        );
+        assert!(names.contains(&"Status"), "missing Status, got: {names:?}");
+    }
+
+    #[test]
+    fn test_rust_impl_methods() {
+        let src = r#"
+pub struct Config {
+    pub port: u16,
+}
+
+impl Config {
+    pub fn new(port: u16) -> Self {
+        Self { port }
+    }
+
+    pub fn default_port() -> u16 {
+        8080
+    }
+}
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Rust).unwrap();
+        let methods: Vec<&str> = result
+            .symbols
+            .iter()
+            .filter(|s| s.kind == "method")
+            .map(|s| s.name.as_str())
+            .collect();
+        assert!(methods.contains(&"new"), "missing new, got: {methods:?}");
+        assert!(
+            methods.contains(&"default_port"),
+            "missing default_port, got: {methods:?}"
+        );
+    }
+
+    #[test]
+    fn test_rust_trait_methods() {
+        let src = r#"
+pub trait Service {
+    fn start(&self) -> Result<(), Box<dyn std::error::Error>>;
+    fn stop(&self);
+}
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Rust).unwrap();
+        assert_eq!(result.symbols.len(), 1);
+        assert_eq!(result.symbols[0].name, "Service");
+        assert_eq!(result.symbols[0].kind, "trait");
+        let method_names: Vec<&str> = result.symbols[0]
+            .children
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        assert!(
+            method_names.contains(&"start"),
+            "missing start, got: {method_names:?}"
+        );
+        assert!(
+            method_names.contains(&"stop"),
+            "missing stop, got: {method_names:?}"
+        );
+    }
+
+    #[test]
+    fn test_rust_const_and_static() {
+        let src = r#"
+const MAX_SIZE: usize = 1024;
+static COUNTER: AtomicUsize = AtomicUsize::new(0);
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Rust).unwrap();
+        let names: Vec<&str> = result.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(
+            names.contains(&"MAX_SIZE"),
+            "missing MAX_SIZE, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"COUNTER"),
+            "missing COUNTER, got: {names:?}"
+        );
+        assert!(result.symbols.iter().all(|s| s.kind == "constant"));
     }
 
     #[test]
