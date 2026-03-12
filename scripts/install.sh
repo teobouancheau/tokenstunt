@@ -42,6 +42,11 @@ get_target() {
 main() {
   local version target url archive
 
+  # Skip if binary already exists and is executable
+  if [[ -x "${BIN_DIR}/${BINARY_NAME}" ]]; then
+    return 0
+  fi
+
   echo "Installing TokenStunt..."
 
   version="$(get_latest_version)"
