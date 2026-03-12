@@ -3,13 +3,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-/// Returns the cache directory for a project's index database.
-///
-/// Path: `~/.cache/tokenstunt/<project-name>-<hash>/index.db`
-///
-/// The hash is derived from the canonical root path to avoid collisions
-/// between projects with the same directory name.
-pub fn cache_db_path(root: &Path) -> Result<PathBuf> {
+/// Returns `~/.cache/tokenstunt/<project-name>-<hash>/` for a given project root.
+pub fn project_cache_dir(root: &Path) -> Result<PathBuf> {
     let project_name = root
         .file_name()
         .and_then(|n| n.to_str())
@@ -18,8 +13,15 @@ pub fn cache_db_path(root: &Path) -> Result<PathBuf> {
     let hash = path_hash(root);
     let dir_name = format!("{project_name}-{hash}");
 
-    let cache_dir = cache_root()?.join(dir_name);
-    Ok(cache_dir.join("index.db"))
+    Ok(cache_root()?.join(dir_name))
+}
+
+pub fn cache_db_path(root: &Path) -> Result<PathBuf> {
+    Ok(project_cache_dir(root)?.join("index.db"))
+}
+
+pub fn cache_config_path(root: &Path) -> Result<PathBuf> {
+    Ok(project_cache_dir(root)?.join("config.toml"))
 }
 
 fn cache_root() -> Result<PathBuf> {
@@ -67,5 +69,15 @@ mod tests {
         let b = cache_db_path(Path::new("/Users/dev/project")).unwrap();
 
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn config_and_db_share_same_directory() {
+        let root = Path::new("/Users/dev/project");
+        let db = cache_db_path(root).unwrap();
+        let config = cache_config_path(root).unwrap();
+
+        assert_eq!(db.parent(), config.parent());
+        assert!(config.ends_with("config.toml"));
     }
 }
