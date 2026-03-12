@@ -95,8 +95,8 @@ impl Indexer {
 
                 self.store.delete_file_blocks_with_conn(conn, file_id)?;
 
-                let symbols = match self.extractor.extract(&source, entry.language) {
-                    Ok(s) => s,
+                let parse_result = match self.extractor.extract(&source, entry.language) {
+                    Ok(r) => r,
                     Err(e) => {
                         warn!(path = %rel_path, error = %e, "failed to parse");
                         stats.errors += 1;
@@ -104,7 +104,8 @@ impl Indexer {
                     }
                 };
 
-                for symbol in &symbols {
+                // references ignored for now -- Phase 2
+                for symbol in &parse_result.symbols {
                     self.insert_symbol_with_conn(conn, file_id, symbol, None)?;
                     stats.blocks += count_symbols(symbol);
                 }
