@@ -5,7 +5,7 @@ description: Configure TokenStunt embeddings — auto-detect provider, models, a
 
 Configure TokenStunt embeddings automatically.
 
-First, check if `.tokenstunt/config.toml` already exists. If it does, read it and show the current config, then ask if the user wants to reconfigure.
+First, check if `~/.cache/tokenstunt/<project>/config.toml` already exists. If it does, read it and show the current config, then ask if the user wants to reconfigure.
 
 ## Step 1: Pick a provider
 
@@ -73,7 +73,7 @@ Set the endpoint:
 - LM Studio: "http://localhost:1234/v1/embeddings"
 - OpenAI: "https://api.openai.com/v1/embeddings"
 
-Write `.tokenstunt/config.toml` with the detected values. Show the config to the user for confirmation.
+Write `~/.cache/tokenstunt/<project>/config.toml` with the detected values. Show the config to the user for confirmation.
 
 ## Step 6: Verify
 
