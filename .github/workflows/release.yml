@@ -93,7 +93,7 @@ jobs:
           tar czf ../../../tokenstunt-${{ matrix.target }}.tar.gz tokenstunt
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: tokenstunt-${{ matrix.target }}
           path: tokenstunt-${{ matrix.target }}.tar.gz
@@ -120,7 +120,7 @@ jobs:
           git push origin main --tags
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: artifacts
 
