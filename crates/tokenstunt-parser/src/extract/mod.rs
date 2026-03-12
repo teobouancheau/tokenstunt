@@ -158,6 +158,7 @@ impl SymbolExtractor {
                     extractor.extract_references(root, source_bytes),
                 )
             }
+            #[allow(unreachable_patterns)]
             _ => (vec![], vec![]),
         };
 
@@ -181,9 +182,7 @@ mod tests {
         let src = r#"function greet(name: string): string {
     return `Hello, ${name}!`;
 }"#;
-        let result = make_extractor()
-            .extract(src, Language::TypeScript)
-            .unwrap();
+        let result = make_extractor().extract(src, Language::TypeScript).unwrap();
         let symbols = &result.symbols;
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].name, "greet");
@@ -202,9 +201,7 @@ mod tests {
         this.users.delete(id);
     }
 }"#;
-        let result = make_extractor()
-            .extract(src, Language::TypeScript)
-            .unwrap();
+        let result = make_extractor().extract(src, Language::TypeScript).unwrap();
         let symbols = &result.symbols;
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].name, "UserService");
@@ -219,9 +216,7 @@ mod tests {
     port: number;
     host: string;
 }"#;
-        let result = make_extractor()
-            .extract(src, Language::TypeScript)
-            .unwrap();
+        let result = make_extractor().extract(src, Language::TypeScript).unwrap();
         let symbols = &result.symbols;
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].name, "Config");
@@ -233,9 +228,7 @@ mod tests {
         let src = r#"const fetchData = async (url: string): Promise<Response> => {
     return fetch(url);
 };"#;
-        let result = make_extractor()
-            .extract(src, Language::TypeScript)
-            .unwrap();
+        let result = make_extractor().extract(src, Language::TypeScript).unwrap();
         let symbols = &result.symbols;
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].name, "fetchData");
@@ -460,7 +453,10 @@ func (s *Server) Stop() {
             .filter(|s| s.kind == "method")
             .map(|s| s.name.as_str())
             .collect();
-        assert!(methods.contains(&"Start"), "missing Start, got: {methods:?}");
+        assert!(
+            methods.contains(&"Start"),
+            "missing Start, got: {methods:?}"
+        );
         assert!(methods.contains(&"Stop"), "missing Stop, got: {methods:?}");
     }
 
@@ -555,11 +551,7 @@ public enum Status {
         assert_eq!(iface.kind, "interface");
         assert_eq!(iface.children.len(), 2);
 
-        let enm = result
-            .symbols
-            .iter()
-            .find(|s| s.name == "Status")
-            .unwrap();
+        let enm = result.symbols.iter().find(|s| s.name == "Status").unwrap();
         assert_eq!(enm.kind, "enum");
     }
 
@@ -593,25 +585,13 @@ int add(int a, int b) {
         assert!(names.contains(&"Config"), "missing Config, got: {names:?}");
         assert!(names.contains(&"Status"), "missing Status, got: {names:?}");
 
-        let config = result
-            .symbols
-            .iter()
-            .find(|s| s.name == "Config")
-            .unwrap();
+        let config = result.symbols.iter().find(|s| s.name == "Config").unwrap();
         assert_eq!(config.kind, "struct");
 
-        let status = result
-            .symbols
-            .iter()
-            .find(|s| s.name == "Status")
-            .unwrap();
+        let status = result.symbols.iter().find(|s| s.name == "Status").unwrap();
         assert_eq!(status.kind, "enum");
 
-        let greet = result
-            .symbols
-            .iter()
-            .find(|s| s.name == "greet")
-            .unwrap();
+        let greet = result.symbols.iter().find(|s| s.name == "greet").unwrap();
         assert_eq!(greet.kind, "function");
     }
 
@@ -665,18 +645,10 @@ int main() {
         assert_eq!(class.children[0].name, "getUser");
         assert_eq!(class.children[0].kind, "method");
 
-        let point = result
-            .symbols
-            .iter()
-            .find(|s| s.name == "Point")
-            .unwrap();
+        let point = result.symbols.iter().find(|s| s.name == "Point").unwrap();
         assert_eq!(point.kind, "struct");
 
-        let color = result
-            .symbols
-            .iter()
-            .find(|s| s.name == "Color")
-            .unwrap();
+        let color = result.symbols.iter().find(|s| s.name == "Color").unwrap();
         assert_eq!(color.kind, "enum");
     }
 
@@ -718,21 +690,13 @@ MAX_RETRIES = 3
             "missing MAX_RETRIES, got: {names:?}"
         );
 
-        let module = result
-            .symbols
-            .iter()
-            .find(|s| s.name == "Helpers")
-            .unwrap();
+        let module = result.symbols.iter().find(|s| s.name == "Helpers").unwrap();
         assert_eq!(module.kind, "module");
         assert_eq!(module.children.len(), 1);
         assert_eq!(module.children[0].name, "format_name");
         assert_eq!(module.children[0].kind, "method");
 
-        let class = result
-            .symbols
-            .iter()
-            .find(|s| s.name == "User")
-            .unwrap();
+        let class = result.symbols.iter().find(|s| s.name == "User").unwrap();
         assert_eq!(class.kind, "class");
         assert_eq!(class.children.len(), 3);
         assert_eq!(class.children[0].name, "initialize");
@@ -812,11 +776,7 @@ enum Status {
         );
         assert!(names.contains(&"Status"), "missing Status, got: {names:?}");
 
-        let greet = result
-            .symbols
-            .iter()
-            .find(|s| s.name == "greet")
-            .unwrap();
+        let greet = result.symbols.iter().find(|s| s.name == "greet").unwrap();
         assert_eq!(greet.kind, "function");
 
         let class = result
@@ -829,11 +789,7 @@ enum Status {
         assert_eq!(class.children[0].name, "getUser");
         assert_eq!(class.children[0].kind, "method");
 
-        let config = result
-            .symbols
-            .iter()
-            .find(|s| s.name == "Config")
-            .unwrap();
+        let config = result.symbols.iter().find(|s| s.name == "Config").unwrap();
         assert_eq!(config.kind, "struct");
 
         let protocol = result
@@ -843,11 +799,7 @@ enum Status {
             .unwrap();
         assert_eq!(protocol.kind, "interface");
 
-        let enm = result
-            .symbols
-            .iter()
-            .find(|s| s.name == "Status")
-            .unwrap();
+        let enm = result.symbols.iter().find(|s| s.name == "Status").unwrap();
         assert_eq!(enm.kind, "enum");
     }
 
@@ -904,11 +856,7 @@ enum class Status {
         );
         assert!(names.contains(&"Status"), "missing Status, got: {names:?}");
 
-        let greet = result
-            .symbols
-            .iter()
-            .find(|s| s.name == "greet")
-            .unwrap();
+        let greet = result.symbols.iter().find(|s| s.name == "greet").unwrap();
         assert_eq!(greet.kind, "function");
 
         let class = result
@@ -935,11 +883,7 @@ enum class Status {
             .unwrap();
         assert_eq!(iface.kind, "interface");
 
-        let enm = result
-            .symbols
-            .iter()
-            .find(|s| s.name == "Status")
-            .unwrap();
+        let enm = result.symbols.iter().find(|s| s.name == "Status").unwrap();
         assert_eq!(enm.kind, "enum");
     }
 
@@ -977,11 +921,7 @@ enum Status {
         );
         assert!(names.contains(&"Status"), "missing Status, got: {names:?}");
 
-        let greet = result
-            .symbols
-            .iter()
-            .find(|s| s.name == "greet")
-            .unwrap();
+        let greet = result.symbols.iter().find(|s| s.name == "greet").unwrap();
         assert_eq!(greet.kind, "function");
 
         let class = result
@@ -994,20 +934,14 @@ enum Status {
         assert_eq!(class.children[0].name, "getUser");
         assert_eq!(class.children[0].kind, "method");
 
-        let enm = result
-            .symbols
-            .iter()
-            .find(|s| s.name == "Status")
-            .unwrap();
+        let enm = result.symbols.iter().find(|s| s.name == "Status").unwrap();
         assert_eq!(enm.kind, "enum");
     }
 
     #[test]
     fn test_parse_result_contains_empty_references() {
         let src = "function hello() {}";
-        let result = make_extractor()
-            .extract(src, Language::TypeScript)
-            .unwrap();
+        let result = make_extractor().extract(src, Language::TypeScript).unwrap();
         assert_eq!(result.symbols.len(), 1);
         assert!(result.references.is_empty());
     }
@@ -1039,10 +973,7 @@ export function handler(req: Request) {
             "missing Config, got: {ref_names:?}"
         );
         assert!(result.references.iter().all(|r| r.kind == "import"));
-        assert!(result
-            .references
-            .iter()
-            .all(|r| r.source_symbol.is_empty()));
+        assert!(result.references.iter().all(|r| r.source_symbol.is_empty()));
     }
 
     #[test]
@@ -1102,10 +1033,7 @@ def handler(request):
             "missing config, got: {ref_names:?}"
         );
         assert!(result.references.iter().all(|r| r.kind == "import"));
-        assert!(result
-            .references
-            .iter()
-            .all(|r| r.source_symbol.is_empty()));
+        assert!(result.references.iter().all(|r| r.source_symbol.is_empty()));
     }
 
     #[test]
@@ -1141,5 +1069,210 @@ from typing import Optional, List
             ref_names.contains(&"List"),
             "missing List, got: {ref_names:?}"
         );
+    }
+
+    #[test]
+    fn test_rust_use_extraction() {
+        let src = r#"
+use std::collections::HashMap;
+use anyhow::Result;
+use tree_sitter::Node;
+
+fn main() {}
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Rust).unwrap();
+        let ref_names: Vec<&str> = result
+            .references
+            .iter()
+            .map(|r| r.target_name.as_str())
+            .collect();
+        assert!(
+            ref_names.contains(&"HashMap"),
+            "missing HashMap, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"Result"),
+            "missing Result, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"Node"),
+            "missing Node, got: {ref_names:?}"
+        );
+        assert!(result.references.iter().all(|r| r.kind == "import"));
+    }
+
+    #[test]
+    fn test_rust_use_list_extraction() {
+        let src = r#"
+use super::helpers::{child_text_by_field, node_text};
+use crate::extract::{LanguageExtractor, ParsedSymbol, RawReference};
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Rust).unwrap();
+        let ref_names: Vec<&str> = result
+            .references
+            .iter()
+            .map(|r| r.target_name.as_str())
+            .collect();
+        assert!(
+            ref_names.contains(&"child_text_by_field"),
+            "missing child_text_by_field, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"node_text"),
+            "missing node_text, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"LanguageExtractor"),
+            "missing LanguageExtractor, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"ParsedSymbol"),
+            "missing ParsedSymbol, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"RawReference"),
+            "missing RawReference, got: {ref_names:?}"
+        );
+    }
+
+    #[test]
+    fn test_rust_use_alias_extraction() {
+        let src = r#"
+use std::collections::HashMap as Map;
+use serde;
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Rust).unwrap();
+        let ref_names: Vec<&str> = result
+            .references
+            .iter()
+            .map(|r| r.target_name.as_str())
+            .collect();
+        assert!(
+            ref_names.contains(&"Map"),
+            "missing Map alias, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"serde"),
+            "missing serde, got: {ref_names:?}"
+        );
+    }
+
+    #[test]
+    fn test_go_import_extraction() {
+        let src = r#"
+package main
+
+import "fmt"
+import (
+    "os"
+    "strings"
+)
+
+func main() {}
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Go).unwrap();
+        let ref_names: Vec<&str> = result
+            .references
+            .iter()
+            .map(|r| r.target_name.as_str())
+            .collect();
+        assert!(
+            ref_names.contains(&"fmt"),
+            "missing fmt, got: {ref_names:?}"
+        );
+        assert!(ref_names.contains(&"os"), "missing os, got: {ref_names:?}");
+        assert!(
+            ref_names.contains(&"strings"),
+            "missing strings, got: {ref_names:?}"
+        );
+        assert!(result.references.iter().all(|r| r.kind == "import"));
+    }
+
+    #[test]
+    fn test_java_import_extraction() {
+        let src = r#"
+import java.util.HashMap;
+import java.io.File;
+
+public class Main {
+    public static void main(String[] args) {}
+}
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Java).unwrap();
+        let ref_names: Vec<&str> = result
+            .references
+            .iter()
+            .map(|r| r.target_name.as_str())
+            .collect();
+        assert!(
+            ref_names.contains(&"HashMap"),
+            "missing HashMap, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"File"),
+            "missing File, got: {ref_names:?}"
+        );
+        assert!(result.references.iter().all(|r| r.kind == "import"));
+    }
+
+    #[test]
+    fn test_c_include_extraction() {
+        let src = r#"
+#include <stdio.h>
+#include "myheader.h"
+
+int main() { return 0; }
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::C).unwrap();
+        let ref_names: Vec<&str> = result
+            .references
+            .iter()
+            .map(|r| r.target_name.as_str())
+            .collect();
+        assert!(
+            ref_names.contains(&"stdio"),
+            "missing stdio, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"myheader"),
+            "missing myheader, got: {ref_names:?}"
+        );
+        assert!(result.references.iter().all(|r| r.kind == "import"));
+    }
+
+    #[test]
+    fn test_ruby_require_extraction() {
+        let src = r#"
+require 'json'
+require_relative 'helper'
+
+class MyClass
+  def hello
+    puts "hello"
+  end
+end
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Ruby).unwrap();
+        let ref_names: Vec<&str> = result
+            .references
+            .iter()
+            .map(|r| r.target_name.as_str())
+            .collect();
+        assert!(
+            ref_names.contains(&"json"),
+            "missing json, got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"helper"),
+            "missing helper, got: {ref_names:?}"
+        );
+        assert!(result.references.iter().all(|r| r.kind == "import"));
     }
 }

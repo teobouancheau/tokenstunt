@@ -17,8 +17,19 @@ impl LanguageExtractor for SwiftExtractor {
         symbols
     }
 
-    fn extract_references(&self, _root: Node<'_>, _source: &[u8]) -> Vec<RawReference> {
-        vec![]
+    fn extract_references(&self, root: Node<'_>, source: &[u8]) -> Vec<RawReference> {
+        let mut refs = Vec::new();
+        let mut cursor = root.walk();
+
+        for child in root.children(&mut cursor) {
+            if child.kind() == "import_declaration"
+                && let Some(r) = extract_import_ref(child, source)
+            {
+                refs.push(r);
+            }
+        }
+
+        refs
     }
 }
 
@@ -72,11 +83,7 @@ fn extract_function(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
     })
 }
 
-fn extract_class_like(
-    node: Node<'_>,
-    source: &[u8],
-    kind: &'static str,
-) -> Option<ParsedSymbol> {
+fn extract_class_like(node: Node<'_>, source: &[u8], kind: &'static str) -> Option<ParsedSymbol> {
     let name = child_text_by_field(node, "name", source)?;
     let content = node_text(node, source);
     let signature = extract_first_line(&content);
@@ -85,13 +92,13 @@ fn extract_class_like(
     if let Some(body) = node.child_by_field_name("body") {
         let mut cursor = body.walk();
         for child in body.children(&mut cursor) {
-            if child.kind() == "function_declaration" {
-                if let Some(method) = extract_function(child, source) {
-                    children.push(ParsedSymbol {
-                        kind: "method",
-                        ..method
-                    });
-                }
+            if child.kind() == "function_declaration"
+                && let Some(method) = extract_function(child, source)
+            {
+                children.push(ParsedSymbol {
+                    kind: "method",
+                    ..method
+                });
             }
         }
     }
@@ -109,4 +116,19 @@ fn extract_class_like(
 
 fn extract_first_line(text: &str) -> String {
     text.lines().next().unwrap_or("").to_string()
+}
+
+fn extract_import_ref(node: Node<'_>, source: &[u8]) -> Option<RawReference> {
+    let mut cursor = node.walk();
+    let target_name = node
+        .children(&mut cursor)
+        .find(|c| c.kind() == "identifier")
+        .map(|c| node_text(c, source))?;
+
+    Some(RawReference {
+        source_symbol: String::new(),
+        target_name,
+        kind: "import",
+        line: node.start_position().row as u32 + 1,
+    })
 }

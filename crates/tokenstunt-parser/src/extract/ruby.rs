@@ -17,8 +17,19 @@ impl LanguageExtractor for RubyExtractor {
         symbols
     }
 
-    fn extract_references(&self, _root: Node<'_>, _source: &[u8]) -> Vec<RawReference> {
-        vec![]
+    fn extract_references(&self, root: Node<'_>, source: &[u8]) -> Vec<RawReference> {
+        let mut refs = Vec::new();
+        let mut cursor = root.walk();
+
+        for child in root.children(&mut cursor) {
+            if child.kind() == "call"
+                && let Some(raw_ref) = extract_require(child, source)
+            {
+                refs.push(raw_ref);
+            }
+        }
+
+        refs
     }
 }
 
@@ -187,6 +198,40 @@ fn extract_module(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
         content,
         signature,
         children,
+    })
+}
+
+fn extract_require(node: Node<'_>, source: &[u8]) -> Option<RawReference> {
+    let method = node.child_by_field_name("method")?;
+    let method_name = node_text(method, source);
+    if method_name != "require" && method_name != "require_relative" {
+        return None;
+    }
+
+    let arguments = node.child_by_field_name("arguments")?;
+    let mut cursor = arguments.walk();
+    let string_node = arguments
+        .children(&mut cursor)
+        .find(|n| n.kind() == "string")?;
+
+    let mut str_cursor = string_node.walk();
+    let content_node = string_node
+        .children(&mut str_cursor)
+        .find(|n| n.kind() == "string_content")?;
+
+    let raw_path = node_text(content_node, source);
+    let target_name = raw_path
+        .split('/')
+        .next_back()
+        .unwrap_or(&raw_path)
+        .trim_end_matches(".rb")
+        .to_string();
+
+    Some(RawReference {
+        source_symbol: String::new(),
+        target_name,
+        kind: "import",
+        line: node.start_position().row as u32 + 1,
     })
 }
 

@@ -17,8 +17,55 @@ impl LanguageExtractor for KotlinExtractor {
         symbols
     }
 
-    fn extract_references(&self, _root: Node<'_>, _source: &[u8]) -> Vec<RawReference> {
-        vec![]
+    fn extract_references(&self, root: Node<'_>, source: &[u8]) -> Vec<RawReference> {
+        let mut refs = Vec::new();
+        let mut cursor = root.walk();
+
+        for child in root.children(&mut cursor) {
+            match child.kind() {
+                "import_header" => extract_import_ref(child, source, &mut refs),
+                "import_list" => {
+                    let mut inner = child.walk();
+                    for import in child.children(&mut inner) {
+                        if import.kind() == "import_header" {
+                            extract_import_ref(import, source, &mut refs);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        refs
+    }
+}
+
+fn extract_import_ref(node: Node<'_>, source: &[u8], out: &mut Vec<RawReference>) {
+    let mut cursor = node.walk();
+
+    for child in node.children(&mut cursor) {
+        if child.kind() != "identifier" {
+            continue;
+        }
+
+        let full_path = node_text(child, source);
+        let last_segment = match full_path.rsplit('.').next() {
+            Some(s) => s.to_string(),
+            None => full_path.clone(),
+        };
+
+        if last_segment == "*" {
+            continue;
+        }
+
+        let line = node.start_position().row as u32 + 1;
+
+        out.push(RawReference {
+            source_symbol: String::new(),
+            target_name: last_segment,
+            kind: "import",
+            line,
+        });
     }
 }
 
@@ -70,13 +117,13 @@ fn extract_class(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
     if let Some(body) = find_child_by_kind(node, "class_body") {
         let mut cursor = body.walk();
         for child in body.children(&mut cursor) {
-            if child.kind() == "function_declaration" {
-                if let Some(method) = extract_function(child, source) {
-                    children.push(ParsedSymbol {
-                        kind: "method",
-                        ..method
-                    });
-                }
+            if child.kind() == "function_declaration"
+                && let Some(method) = extract_function(child, source)
+            {
+                children.push(ParsedSymbol {
+                    kind: "method",
+                    ..method
+                });
             }
         }
     }
@@ -101,13 +148,13 @@ fn extract_object(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
     if let Some(body) = find_child_by_kind(node, "class_body") {
         let mut cursor = body.walk();
         for child in body.children(&mut cursor) {
-            if child.kind() == "function_declaration" {
-                if let Some(method) = extract_function(child, source) {
-                    children.push(ParsedSymbol {
-                        kind: "method",
-                        ..method
-                    });
-                }
+            if child.kind() == "function_declaration"
+                && let Some(method) = extract_function(child, source)
+            {
+                children.push(ParsedSymbol {
+                    kind: "method",
+                    ..method
+                });
             }
         }
     }

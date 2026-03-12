@@ -12,8 +12,50 @@ impl LanguageExtractor for JavaExtractor {
         symbols
     }
 
-    fn extract_references(&self, _root: Node<'_>, _source: &[u8]) -> Vec<RawReference> {
-        vec![]
+    fn extract_references(&self, root: Node<'_>, source: &[u8]) -> Vec<RawReference> {
+        let mut refs = Vec::new();
+        let mut cursor = root.walk();
+
+        for child in root.children(&mut cursor) {
+            if child.kind() == "import_declaration" {
+                extract_import_ref(child, source, &mut refs);
+            }
+        }
+
+        refs
+    }
+}
+
+fn extract_import_ref(node: Node<'_>, source: &[u8], out: &mut Vec<RawReference>) {
+    let mut cursor = node.walk();
+
+    for child in node.children(&mut cursor) {
+        let target_name = match child.kind() {
+            "scoped_identifier" => {
+                let name_node = match child.child_by_field_name("name") {
+                    Some(n) => n,
+                    None => continue,
+                };
+                let name = node_text(name_node, source);
+                // skip wildcard imports
+                if name == "*" {
+                    continue;
+                }
+                name
+            }
+            "identifier" => node_text(child, source),
+            _ => continue,
+        };
+
+        let line = node.start_position().row as u32 + 1;
+        out.push(RawReference {
+            source_symbol: String::new(),
+            target_name,
+            kind: "import",
+            line,
+        });
+        // only one import path per declaration
+        return;
     }
 }
 
@@ -131,10 +173,7 @@ fn extract_method(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
     })
 }
 
-fn extract_class_members(
-    body: Node<'_>,
-    source: &[u8],
-) -> (Vec<ParsedSymbol>, Vec<ParsedSymbol>) {
+fn extract_class_members(body: Node<'_>, source: &[u8]) -> (Vec<ParsedSymbol>, Vec<ParsedSymbol>) {
     let mut methods = Vec::new();
     let mut constants = Vec::new();
     let mut cursor = body.walk();
