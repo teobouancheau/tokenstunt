@@ -675,6 +675,46 @@ impl Store {
         Ok(rows)
     }
 
+    pub fn insert_embedding(&self, block_id: i64, vector: &[f32], model: &str) -> Result<()> {
+        let conn = self.write_lock()?;
+        let blob = vector_to_blob(vector);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+        conn.execute(
+            "INSERT OR REPLACE INTO embeddings (block_id, vector, model, computed_at) VALUES (?1, ?2, ?3, ?4)",
+            params![block_id, blob, model, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_embedding(&self, block_id: i64) -> Result<Option<Vec<f32>>> {
+        let conn = self.read_lock()?;
+        let mut stmt = conn.prepare("SELECT vector FROM embeddings WHERE block_id = ?1")?;
+        let result = stmt.query_row(params![block_id], |row| {
+            let blob: Vec<u8> = row.get(0)?;
+            Ok(blob_to_vector(&blob))
+        });
+        match result {
+            Ok(vec) => Ok(Some(vec)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn get_all_embeddings(&self) -> Result<Vec<(i64, Vec<f32>)>> {
+        let conn = self.read_lock()?;
+        let mut stmt = conn.prepare("SELECT block_id, vector FROM embeddings")?;
+        let rows = stmt
+            .query_map([], |row| {
+                let block_id: i64 = row.get(0)?;
+                let blob: Vec<u8> = row.get(1)?;
+                Ok((block_id, blob_to_vector(&blob)))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     fn map_code_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<CodeBlock> {
         let kind_str: String = row.get(3)?;
         Ok(CodeBlock {
@@ -691,6 +731,16 @@ impl Store {
             language: row.get(10)?,
         })
     }
+}
+
+fn vector_to_blob(vector: &[f32]) -> Vec<u8> {
+    vector.iter().flat_map(|f| f.to_le_bytes()).collect()
+}
+
+fn blob_to_vector(blob: &[u8]) -> Vec<f32> {
+    blob.chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect()
 }
 
 impl Drop for Store {
@@ -1105,6 +1155,51 @@ mod tests {
         store.invalidate_overview_cache("/test").unwrap();
         assert!(store.get_overview_cache("/test", 1).unwrap().is_none());
         assert!(store.get_overview_cache("/test", 2).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_embedding_storage() {
+        let f = setup();
+
+        let vec = vec![0.1f32, 0.2, 0.3];
+        f.store
+            .insert_embedding(f.block_id, &vec, "nomic-embed-text")
+            .unwrap();
+
+        let retrieved = f.store.get_embedding(f.block_id).unwrap();
+        assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.len(), 3);
+        assert!((retrieved[0] - 0.1).abs() < 0.001);
+        assert!((retrieved[1] - 0.2).abs() < 0.001);
+        assert!((retrieved[2] - 0.3).abs() < 0.001);
+
+        let all = f.store.get_all_embeddings().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].0, f.block_id);
+    }
+
+    #[test]
+    fn test_embedding_missing() {
+        let f = setup();
+        let result = f.store.get_embedding(f.block_id).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_embedding_replace() {
+        let f = setup();
+
+        f.store
+            .insert_embedding(f.block_id, &[1.0, 2.0], "model-a")
+            .unwrap();
+        f.store
+            .insert_embedding(f.block_id, &[3.0, 4.0], "model-b")
+            .unwrap();
+
+        let retrieved = f.store.get_embedding(f.block_id).unwrap().unwrap();
+        assert_eq!(retrieved.len(), 2);
+        assert!((retrieved[0] - 3.0).abs() < 0.001);
     }
 
     #[test]
