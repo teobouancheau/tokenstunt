@@ -22,19 +22,24 @@ jobs:
       - name: Calculate version
         id: calc
         run: |
-          DATE=$(date -u +%Y.%-m.%-d)
-          EXISTING=$(git tag -l "v${DATE}.*" | sort -V | tail -1)
+          # Cargo semver requires exactly 3 segments: MAJOR.MINOR.PATCH
+          # Format: YYYY.MDD.PATCH (e.g. 2026.312.0)
+          YEAR=$(date -u +%Y)
+          MONTHDAY=$(date -u +%-m%d)
+          PREFIX="${YEAR}.${MONTHDAY}"
+          EXISTING=$(git tag -l "v${PREFIX}.*" | sort -V | tail -1)
           if [[ -z "$EXISTING" ]]; then
             PATCH=0
           else
-            LAST_PATCH=$(echo "$EXISTING" | sed "s/v${DATE}\.//")
+            LAST_PATCH=$(echo "$EXISTING" | sed "s/v${PREFIX}\.//")
             PATCH=$((LAST_PATCH + 1))
           fi
-          VERSION="${DATE}.${PATCH}"
+          VERSION="${PREFIX}.${PATCH}"
+          DISPLAY_DATE=$(date -u +%Y-%m-%d)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
-          echo "name=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Release: $VERSION"
+          echo "name=${DISPLAY_DATE}" >> "$GITHUB_OUTPUT"
+          echo "Release: $VERSION ($DISPLAY_DATE)"
 
   build:
     needs: version
