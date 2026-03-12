@@ -700,6 +700,25 @@ impl Store {
         }
     }
 
+    pub fn embedding_count(&self) -> Result<i64> {
+        let conn = self.read_lock()?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))?;
+        Ok(count)
+    }
+
+    pub fn dependency_count(&self) -> Result<(i64, i64)> {
+        let conn = self.read_lock()?;
+        let total: i64 =
+            conn.query_row("SELECT COUNT(*) FROM dependencies", [], |row| row.get(0))?;
+        let resolved: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM dependencies WHERE resolved = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok((total, resolved))
+    }
+
     pub fn get_all_embeddings(&self) -> Result<Vec<(i64, Vec<f32>)>> {
         let conn = self.read_lock()?;
         let mut stmt = conn.prepare("SELECT block_id, vector FROM embeddings")?;
@@ -1198,6 +1217,47 @@ mod tests {
         let retrieved = f.store.get_embedding(f.block_id).unwrap().unwrap();
         assert_eq!(retrieved.len(), 2);
         assert!((retrieved[0] - 3.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_embedding_count() {
+        let f = setup();
+        assert_eq!(f.store.embedding_count().unwrap(), 0);
+
+        f.store
+            .insert_embedding(f.block_id, &[0.1, 0.2, 0.3], "test-model")
+            .unwrap();
+        assert_eq!(f.store.embedding_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_dependency_count() {
+        let f = setup();
+        assert_eq!(f.store.dependency_count().unwrap(), (0, 0));
+
+        let target_id = f
+            .store
+            .insert_code_block(
+                f.file_id,
+                "helper",
+                CodeBlockKind::Function,
+                10,
+                15,
+                "fn helper() {}",
+                "fn helper()",
+                None,
+            )
+            .unwrap();
+
+        f.store
+            .insert_dependency(f.block_id, Some(target_id), "helper", "call")
+            .unwrap();
+        assert_eq!(f.store.dependency_count().unwrap(), (1, 1));
+
+        f.store
+            .insert_dependency(f.block_id, None, "external", "import")
+            .unwrap();
+        assert_eq!(f.store.dependency_count().unwrap(), (2, 1));
     }
 
     #[test]
