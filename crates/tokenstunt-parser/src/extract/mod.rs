@@ -1,3 +1,4 @@
+mod go;
 mod helpers;
 mod python;
 mod rust_lang;
@@ -7,6 +8,7 @@ use anyhow::{Context, Result};
 use tree_sitter::{Node, Parser};
 
 use crate::languages::{Language, LanguageRegistry};
+use go::GoExtractor;
 use python::PythonExtractor;
 use rust_lang::RustExtractor;
 use typescript::TypeScriptExtractor;
@@ -81,6 +83,13 @@ impl SymbolExtractor {
             }
             Language::Rust => {
                 let extractor = RustExtractor;
+                (
+                    extractor.extract_symbols(root, source_bytes),
+                    extractor.extract_references(root, source_bytes),
+                )
+            }
+            Language::Go => {
+                let extractor = GoExtractor;
                 (
                     extractor.extract_symbols(root, source_bytes),
                     extractor.extract_references(root, source_bytes),
@@ -320,6 +329,106 @@ static COUNTER: AtomicUsize = AtomicUsize::new(0);
             "missing COUNTER, got: {names:?}"
         );
         assert!(result.symbols.iter().all(|s| s.kind == "constant"));
+    }
+
+    #[test]
+    fn test_go_function_and_struct() {
+        let src = r#"
+package main
+
+func Greet(name string) string {
+    return "Hello, " + name + "!"
+}
+
+type Config struct {
+    Port int
+    Host string
+}
+
+type Service interface {
+    Start() error
+    Stop()
+}
+
+const MaxSize = 1024
+
+var DefaultHost = "localhost"
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Go).unwrap();
+        let names: Vec<&str> = result.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"Greet"), "missing Greet, got: {names:?}");
+        assert!(names.contains(&"Config"), "missing Config, got: {names:?}");
+        assert!(
+            names.contains(&"Service"),
+            "missing Service, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"MaxSize"),
+            "missing MaxSize, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"DefaultHost"),
+            "missing DefaultHost, got: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_go_method_declaration() {
+        let src = r#"
+package main
+
+type Server struct {
+    port int
+}
+
+func (s *Server) Start() error {
+    return nil
+}
+
+func (s *Server) Stop() {
+}
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Go).unwrap();
+        let methods: Vec<&str> = result
+            .symbols
+            .iter()
+            .filter(|s| s.kind == "method")
+            .map(|s| s.name.as_str())
+            .collect();
+        assert!(methods.contains(&"Start"), "missing Start, got: {methods:?}");
+        assert!(methods.contains(&"Stop"), "missing Stop, got: {methods:?}");
+    }
+
+    #[test]
+    fn test_go_interface_methods() {
+        let src = r#"
+package main
+
+type Reader interface {
+    Read(p []byte) (n int, err error)
+    Close() error
+}
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Go).unwrap();
+        assert_eq!(result.symbols.len(), 1);
+        assert_eq!(result.symbols[0].name, "Reader");
+        assert_eq!(result.symbols[0].kind, "interface");
+        let method_names: Vec<&str> = result.symbols[0]
+            .children
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        assert!(
+            method_names.contains(&"Read"),
+            "missing Read, got: {method_names:?}"
+        );
+        assert!(
+            method_names.contains(&"Close"),
+            "missing Close, got: {method_names:?}"
+        );
     }
 
     #[test]
