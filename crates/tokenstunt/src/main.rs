@@ -1,4 +1,5 @@
 mod config;
+mod paths;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -55,8 +56,11 @@ fn resolve_root(root: Option<PathBuf>) -> Result<PathBuf> {
     std::fs::canonicalize(&path).with_context(|| format!("cannot resolve path: {}", path.display()))
 }
 
-fn resolve_db(db: Option<PathBuf>, root: &std::path::Path) -> PathBuf {
-    db.unwrap_or_else(|| root.join(".tokenstunt").join("index.db"))
+fn resolve_db(db: Option<PathBuf>, root: &std::path::Path) -> Result<PathBuf> {
+    match db {
+        Some(path) => Ok(path),
+        None => paths::cache_db_path(root),
+    }
 }
 
 fn init_logging(default_level: &str) {
@@ -105,7 +109,7 @@ async fn main() -> Result<()> {
             let root = resolve_root(root)?;
             let cfg = config::Config::load(&root)?;
             let embedder = load_embedder(&cfg)?;
-            let db_path = resolve_db(db, &root);
+            let db_path = resolve_db(db, &root)?;
 
             if let Some(parent) = db_path.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -166,7 +170,7 @@ async fn main() -> Result<()> {
             let root = resolve_root(root)?;
             let cfg = config::Config::load(&root)?;
             let embedder = load_embedder(&cfg)?;
-            let db_path = resolve_db(db, &root);
+            let db_path = resolve_db(db, &root)?;
 
             if let Some(parent) = db_path.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -189,7 +193,7 @@ async fn main() -> Result<()> {
 
         Command::Status { db } => {
             let root = resolve_root(None)?;
-            let db_path = resolve_db(db, &root);
+            let db_path = resolve_db(db, &root)?;
 
             if !db_path.exists() {
                 println!("No index found at {}", db_path.display());
