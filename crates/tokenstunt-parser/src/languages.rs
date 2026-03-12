@@ -73,6 +73,7 @@ pub struct LanguageRegistry {
     ts_java: tree_sitter::Language,
     ts_c: tree_sitter::Language,
     ts_cpp: tree_sitter::Language,
+    ts_ruby: tree_sitter::Language,
 }
 
 impl LanguageRegistry {
@@ -86,6 +87,7 @@ impl LanguageRegistry {
             ts_java: tree_sitter_java::LANGUAGE.into(),
             ts_c: tree_sitter_c::LANGUAGE.into(),
             ts_cpp: tree_sitter_cpp::LANGUAGE.into(),
+            ts_ruby: tree_sitter_ruby::LANGUAGE.into(),
         })
     }
 
@@ -99,6 +101,7 @@ impl LanguageRegistry {
             Language::Java => Ok(self.ts_java.clone()),
             Language::C => Ok(self.ts_c.clone()),
             Language::Cpp => Ok(self.ts_cpp.clone()),
+            Language::Ruby => Ok(self.ts_ruby.clone()),
             other => bail!("language {:?} not yet supported", other),
         }
     }
@@ -115,6 +118,7 @@ impl LanguageRegistry {
                 | Language::Java
                 | Language::C
                 | Language::Cpp
+                | Language::Ruby
         )
     }
 }
@@ -202,6 +206,7 @@ mod tests {
         assert!(registry.get_ts_language(Language::Java).is_ok());
         assert!(registry.get_ts_language(Language::C).is_ok());
         assert!(registry.get_ts_language(Language::Cpp).is_ok());
+        assert!(registry.get_ts_language(Language::Ruby).is_ok());
     }
 
     #[test]
@@ -216,5 +221,6 @@ mod tests {
         assert!(registry.is_supported(Language::Java));
         assert!(registry.is_supported(Language::C));
         assert!(registry.is_supported(Language::Cpp));
+        assert!(registry.is_supported(Language::Ruby));
     }
 }

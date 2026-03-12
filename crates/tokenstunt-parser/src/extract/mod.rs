@@ -3,6 +3,7 @@ mod go;
 mod helpers;
 mod java;
 mod python;
+mod ruby;
 mod rust_lang;
 mod typescript;
 
@@ -14,6 +15,7 @@ use c_lang::CExtractor;
 use go::GoExtractor;
 use java::JavaExtractor;
 use python::PythonExtractor;
+use ruby::RubyExtractor;
 use rust_lang::RustExtractor;
 use typescript::TypeScriptExtractor;
 
@@ -108,6 +110,13 @@ impl SymbolExtractor {
             }
             Language::C | Language::Cpp => {
                 let extractor = CExtractor;
+                (
+                    extractor.extract_symbols(root, source_bytes),
+                    extractor.extract_references(root, source_bytes),
+                )
+            }
+            Language::Ruby => {
+                let extractor = RubyExtractor;
                 (
                     extractor.extract_symbols(root, source_bytes),
                     extractor.extract_references(root, source_bytes),
@@ -633,6 +642,89 @@ int main() {
             .find(|s| s.name == "Color")
             .unwrap();
         assert_eq!(color.kind, "enum");
+    }
+
+    #[test]
+    fn test_ruby_class_method_module_constant() {
+        let src = r#"
+module Helpers
+  def format_name(name)
+    name.strip.capitalize
+  end
+end
+
+class User < ActiveRecord::Base
+  def initialize(name)
+    @name = name
+  end
+
+  def greet
+    "Hello, #{@name}!"
+  end
+
+  def self.find_by_name(name)
+    new(name)
+  end
+end
+
+MAX_RETRIES = 3
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Ruby).unwrap();
+        let names: Vec<&str> = result.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(
+            names.contains(&"Helpers"),
+            "missing Helpers, got: {names:?}"
+        );
+        assert!(names.contains(&"User"), "missing User, got: {names:?}");
+        assert!(
+            names.contains(&"MAX_RETRIES"),
+            "missing MAX_RETRIES, got: {names:?}"
+        );
+
+        let module = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "Helpers")
+            .unwrap();
+        assert_eq!(module.kind, "module");
+        assert_eq!(module.children.len(), 1);
+        assert_eq!(module.children[0].name, "format_name");
+        assert_eq!(module.children[0].kind, "method");
+
+        let class = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "User")
+            .unwrap();
+        assert_eq!(class.kind, "class");
+        assert_eq!(class.children.len(), 3);
+        assert_eq!(class.children[0].name, "initialize");
+        assert_eq!(class.children[0].kind, "method");
+        assert_eq!(class.children[1].name, "greet");
+        assert_eq!(class.children[2].name, "find_by_name");
+        assert!(class.signature.contains("< ActiveRecord::Base"));
+
+        let constant = result
+            .symbols
+            .iter()
+            .find(|s| s.name == "MAX_RETRIES")
+            .unwrap();
+        assert_eq!(constant.kind, "constant");
+    }
+
+    #[test]
+    fn test_ruby_standalone_method() {
+        let src = r#"
+def process(data)
+  data.map { |x| x * 2 }
+end
+"#;
+        let extractor = make_extractor();
+        let result = extractor.extract(src, Language::Ruby).unwrap();
+        assert_eq!(result.symbols.len(), 1);
+        assert_eq!(result.symbols[0].name, "process");
+        assert_eq!(result.symbols[0].kind, "function");
     }
 
     #[test]
