@@ -16,6 +16,7 @@ pub struct EmbeddingsConfig {
     pub endpoint: String,
     pub api_key: Option<String>,
     pub dimensions: usize,
+    #[allow(dead_code)]
     pub batch_size: Option<usize>,
 }
 
