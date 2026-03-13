@@ -609,9 +609,7 @@ fn spawn_embedding_task(
                 Ok(vectors) => {
                     for (i, vector) in vectors.iter().enumerate() {
                         let (block_id, _) = &work[chunk_start + i];
-                        if let Err(e) =
-                            store.insert_embedding(*block_id, vector, &model_name)
-                        {
+                        if let Err(e) = store.insert_embedding(*block_id, vector, &model_name) {
                             warn!(block_id, error = %e, "failed to store embedding");
                         }
                     }
@@ -871,10 +869,7 @@ mod tests {
         let indexer = Indexer::new(store, None).unwrap();
         indexer.index_directory(dir.path(), &NopProgress).unwrap();
 
-        let missing = indexer
-            .store()
-            .get_blocks_without_embeddings(None)
-            .unwrap();
+        let missing = indexer.store().get_blocks_without_embeddings(None).unwrap();
         assert!(
             !missing.is_empty(),
             "indexed blocks should appear as missing embeddings"
