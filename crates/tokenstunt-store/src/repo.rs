@@ -718,6 +718,26 @@ impl Store {
         Ok((total, resolved))
     }
 
+    pub fn get_blocks_without_embeddings(&self, model: Option<&str>) -> Result<Vec<(i64, String)>> {
+        let conn = self.read_lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT cb.id, cb.content
+             FROM code_blocks cb
+             LEFT JOIN embeddings e ON e.block_id = cb.id
+             WHERE cb.parent_id IS NULL
+               AND cb.content != ''
+               AND (e.block_id IS NULL OR (?1 IS NOT NULL AND e.model != ?1))",
+        )?;
+        let rows = stmt
+            .query_map(params![model], |row| {
+                let id: i64 = row.get(0)?;
+                let content: String = row.get(1)?;
+                Ok((id, content))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     pub fn get_all_embeddings(&self) -> Result<Vec<(i64, Vec<f32>)>> {
         let conn = self.read_lock()?;
         let mut stmt = conn.prepare("SELECT block_id, vector FROM embeddings")?;
@@ -1229,6 +1249,84 @@ mod tests {
         store.invalidate_overview_cache("/test").unwrap();
         assert!(store.get_overview_cache("/test", 1).unwrap().is_none());
         assert!(store.get_overview_cache("/test", 2).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_get_blocks_without_embeddings() {
+        let store = Store::open_in_memory().unwrap();
+        let repo_id = store.ensure_repo("/test", "test").unwrap();
+        let file_id = store
+            .upsert_file(repo_id, "src/main.ts", 1, "typescript", 0)
+            .unwrap();
+
+        // Top-level block with content
+        let block_a = store
+            .insert_code_block(
+                file_id,
+                "greet",
+                CodeBlockKind::Function,
+                1,
+                5,
+                "function greet() { return 'hello'; }",
+                "function greet()",
+                None,
+            )
+            .unwrap();
+
+        // Another top-level block
+        let block_b = store
+            .insert_code_block(
+                file_id,
+                "farewell",
+                CodeBlockKind::Function,
+                6,
+                10,
+                "function farewell() { return 'bye'; }",
+                "function farewell()",
+                None,
+            )
+            .unwrap();
+
+        // Child block (should be excluded)
+        store
+            .insert_code_block(
+                file_id,
+                "inner",
+                CodeBlockKind::Function,
+                2,
+                4,
+                "function inner() {}",
+                "function inner()",
+                Some(block_a),
+            )
+            .unwrap();
+
+        // All top-level blocks without embeddings
+        let missing = store.get_blocks_without_embeddings(None).unwrap();
+        assert_eq!(missing.len(), 2);
+
+        // Add embedding for block_a
+        store
+            .insert_embedding(block_a, &[0.1, 0.2], "model-v1")
+            .unwrap();
+
+        // Now only block_b is missing
+        let missing = store.get_blocks_without_embeddings(None).unwrap();
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0].0, block_b);
+
+        // With model filter: block_a has "model-v1", asking for "model-v2" should return both
+        let stale = store
+            .get_blocks_without_embeddings(Some("model-v2"))
+            .unwrap();
+        assert_eq!(stale.len(), 2);
+
+        // With matching model: only block_b missing
+        let matching = store
+            .get_blocks_without_embeddings(Some("model-v1"))
+            .unwrap();
+        assert_eq!(matching.len(), 1);
+        assert_eq!(matching[0].0, block_b);
     }
 
     #[test]

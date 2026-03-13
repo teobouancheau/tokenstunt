@@ -67,6 +67,10 @@ impl EmbeddingProvider for OllamaProvider {
         self.dimensions
     }
 
+    fn model_name(&self) -> &str {
+        &self.model
+    }
+
     async fn health_check(&self) -> Result<()> {
         let url = format!("{}/api/tags", self.endpoint);
         let response = self

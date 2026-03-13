@@ -89,7 +89,10 @@ impl TokenStuntServer {
         params: Parameters<TsSearchParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
-        let engine = SearchEngine::new(self.indexer.store());
+        let engine = match self.indexer.embedder() {
+            Some(embedder) => SearchEngine::with_embedder(self.indexer.store(), embedder.as_ref()),
+            None => SearchEngine::new(self.indexer.store()),
+        };
 
         let query_text = p.query.clone();
         let query = SearchQuery {
