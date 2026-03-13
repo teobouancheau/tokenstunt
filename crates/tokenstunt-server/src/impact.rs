@@ -3,6 +3,8 @@ use std::collections::{HashSet, VecDeque};
 use anyhow::Result;
 use tokenstunt_store::Store;
 
+use crate::render;
+
 const MAX_DEPTH_CAP: u32 = 5;
 
 pub struct ImpactNode {
@@ -84,23 +86,30 @@ pub fn walk_dependents(
 
 pub fn format_impact(result: &ImpactResult) -> String {
     if result.dependents.is_empty() {
-        return format!(
-            "## Impact Analysis: `{}`\n\nNo dependents found. This symbol can be safely modified.",
-            result.source
-        );
+        let mut out = render::header("Impact", &result.source);
+        out.push_str("\n\n  No dependents found. This symbol can be safely modified.\n");
+        return out;
     }
 
-    let mut out = format!(
-        "## Impact Analysis: `{}`\n\n**{} dependents** across **{} files**\n",
-        result.source,
-        result.dependents.len(),
-        result.affected_files.len()
+    let dep_count = result.dependents.len();
+    let file_count = result.affected_files.len();
+    let mut out = render::header(
+        "Impact",
+        &format!(
+            "{}                    {} dependents   {} files",
+            result.source, dep_count, file_count
+        ),
     );
+    out.push('\n');
 
     let max_depth = result.dependents.iter().map(|d| d.depth).max().unwrap_or(0);
 
     for depth in 1..=max_depth {
-        let label = if depth == 1 { "Direct" } else { "Transitive" };
+        let label = if depth == 1 {
+            "Direct".to_string()
+        } else {
+            format!("Depth {depth}")
+        };
         let nodes: Vec<&ImpactNode> = result
             .dependents
             .iter()
@@ -110,23 +119,44 @@ pub fn format_impact(result: &ImpactResult) -> String {
             continue;
         }
 
-        out.push_str(&format!("\n### {label} (depth {depth})\n\n"));
-        for node in &nodes {
-            out.push_str(&format!(
-                "- **{}** ({}) in `{}` [{}]\n",
-                node.name, node.kind, node.file_path, node.dep_kind
-            ));
-        }
+        let items: Vec<render::TreeItem> = nodes
+            .iter()
+            .map(|n| render::TreeItem {
+                label: format!(
+                    "{}  {:<24} {:<28} {}",
+                    render::kind_label_from_str(&n.kind),
+                    n.name,
+                    n.file_path,
+                    capitalize(&n.dep_kind),
+                ),
+            })
+            .collect();
+
+        out.push('\n');
+        out.push_str(&render::render_tree_with_trunk(&label, &items));
     }
 
     if !result.affected_files.is_empty() {
-        out.push_str("\n### Affected Files\n\n");
-        for path in &result.affected_files {
-            out.push_str(&format!("- `{path}`\n"));
-        }
+        let items: Vec<render::TreeItem> = result
+            .affected_files
+            .iter()
+            .map(|p| render::TreeItem {
+                label: p.clone(),
+            })
+            .collect();
+        out.push('\n');
+        out.push_str(&render::render_tree_with_trunk("Affected Files", &items));
     }
 
     out
+}
+
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+    }
 }
 
 #[cfg(test)]
@@ -209,7 +239,7 @@ mod tests {
         let f = setup();
         let result = walk_dependents(&f.store, "funcC", None).unwrap();
         assert!(result.dependents.is_empty());
-        let _ = f.block_c; // used by setup
+        let _ = f.block_c;
     }
 
     #[test]
@@ -284,7 +314,6 @@ mod tests {
             .unwrap();
 
         let result = walk_dependents(&store, "cycleA", None).unwrap();
-        // Should not loop forever; cycleB depends on cycleA, cycleA depends on cycleB
         assert!(result.dependents.len() <= 2);
     }
 
@@ -331,8 +360,8 @@ mod tests {
             affected_files: vec!["src/core.ts".to_string(), "src/util.ts".to_string()],
         };
         let output = format_impact(&result);
-        assert!(output.contains("Direct (depth 1)"));
-        assert!(output.contains("Transitive (depth 2)"));
+        assert!(output.contains("Direct"));
+        assert!(output.contains("Depth 2"));
         assert!(output.contains("funcB"));
         assert!(output.contains("funcC"));
         assert!(output.contains("Affected Files"));

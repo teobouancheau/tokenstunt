@@ -11,6 +11,7 @@ use tokenstunt_search::{SearchEngine, SearchQuery};
 use tokenstunt_store::CodeBlockKind;
 
 use crate::format;
+use crate::render;
 
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -142,9 +143,12 @@ impl TokenStuntServer {
             ))]));
         }
 
+        let mut out = render::header("Symbol", &p.name);
+        out.push_str("\n\n");
+
         let blocks: Vec<_> = results.iter().map(|b| (b.clone(), None)).collect();
-        let output = format::format_blocks(&blocks);
-        Ok(CallToolResult::success(vec![Content::text(output)]))
+        out.push_str(&format::format_symbol_blocks(&blocks));
+        Ok(CallToolResult::success(vec![Content::text(out)]))
     }
 
     #[tool(
@@ -170,7 +174,13 @@ impl TokenStuntServer {
         }
 
         let symbol = &symbols[0];
-        let mut output = format::format_block(symbol, None);
+        let file_path = symbol.file_path.as_deref().unwrap_or("unknown");
+        let location = format!("{file_path}:{}-{}", symbol.start_line, symbol.end_line);
+        let language = symbol.language.as_deref().unwrap_or("text");
+
+        let mut output = render::header("Context", &format!("{}      {}", p.symbol, location));
+        output.push_str("\n\n");
+        output.push_str(&render::code_block(language, &symbol.content));
 
         let direction = p.direction.as_deref().unwrap_or("both");
 
@@ -179,13 +189,29 @@ impl TokenStuntServer {
                 .get_dependencies(symbol.id)
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
             if !deps.is_empty() {
-                output.push_str("\n\n### Dependencies\n");
-                for (block, kind) in &deps {
-                    output.push_str(&format!(
-                        "\n- **{}** ({}) [{}]",
-                        block.name, block.kind, kind
-                    ));
-                }
+                let items: Vec<render::TreeItem> = deps
+                    .iter()
+                    .map(|(block, kind)| {
+                        let dep_path = block.file_path.as_deref().unwrap_or("unknown");
+                        let dep_loc = format!(
+                            "{dep_path}:{}-{}",
+                            block.start_line, block.end_line
+                        );
+                        render::TreeItem {
+                            label: format!(
+                                "{}  {:<24} {:<28} {}",
+                                render::kind_label(&block.kind),
+                                block.name,
+                                dep_loc,
+                                capitalize(kind),
+                            ),
+                        }
+                    })
+                    .collect();
+
+                output.push('\n');
+                output.push('\n');
+                output.push_str(&render::render_tree_with_trunk("Dependencies", &items));
             }
         }
 
@@ -194,13 +220,29 @@ impl TokenStuntServer {
                 .get_dependents(symbol.id)
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
             if !deps.is_empty() {
-                output.push_str("\n\n### Dependents\n");
-                for (block, kind) in &deps {
-                    output.push_str(&format!(
-                        "\n- **{}** ({}) [{}]",
-                        block.name, block.kind, kind
-                    ));
-                }
+                let items: Vec<render::TreeItem> = deps
+                    .iter()
+                    .map(|(block, kind)| {
+                        let dep_path = block.file_path.as_deref().unwrap_or("unknown");
+                        let dep_loc = format!(
+                            "{dep_path}:{}-{}",
+                            block.start_line, block.end_line
+                        );
+                        render::TreeItem {
+                            label: format!(
+                                "{}  {:<24} {:<28} {}",
+                                render::kind_label(&block.kind),
+                                block.name,
+                                dep_loc,
+                                capitalize(kind),
+                            ),
+                        }
+                    })
+                    .collect();
+
+                output.push('\n');
+                output.push('\n');
+                output.push_str(&render::render_tree_with_trunk("Dependents", &items));
             }
         }
 
@@ -267,6 +309,14 @@ impl TokenStuntServer {
     }
 }
 
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+    }
+}
+
 const ENTRY_POINT_PREFIXES: &[&str] = &["main.", "index.", "app.", "mod.", "lib."];
 
 fn build_overview(
@@ -278,44 +328,70 @@ fn build_overview(
     let file_count = store.file_count()?;
     let block_count = store.block_count()?;
 
-    let mut out = format!(
-        "## Project Overview\n\n- **Root**: {}\n- **Indexed files**: {}\n- **Code blocks**: {}\n",
-        root.display(),
-        file_count,
-        block_count,
-    );
+    let kw = 10;
+    let mut out = render::header("Overview", &root.display().to_string());
+    out.push_str("\n\n");
+    out.push_str(&render::kv("Files", &file_count.to_string(), kw));
+    out.push('\n');
+    out.push_str(&render::kv("Blocks", &block_count.to_string(), kw));
+    out.push('\n');
 
     let lang_stats = store.get_language_stats()?;
     if !lang_stats.is_empty() {
-        out.push_str("\n### Languages\n\n");
-        for (lang, count) in &lang_stats {
-            out.push_str(&format!("- **{lang}**: {count} files\n"));
-        }
+        let max_count = lang_stats.iter().map(|(_, c)| *c).max().unwrap_or(1);
+        let items: Vec<render::TreeItem> = lang_stats
+            .iter()
+            .map(|(lang, count)| {
+                let ratio = *count as f64 / max_count as f64;
+                let b = render::bar(ratio, 20);
+                render::TreeItem {
+                    label: format!("{lang:<16} {count:>3} files  {b}"),
+                }
+            })
+            .collect();
+        out.push('\n');
+        out.push_str(&render::render_tree_with_trunk("Languages", &items));
     }
 
     let scope_arg = if scope.is_empty() { None } else { Some(scope) };
 
     let dir_stats = store.get_directory_stats(scope_arg)?;
     if !dir_stats.is_empty() {
-        out.push_str("\n### Module Structure\n\n");
-        for (dir, fc, bc) in &dir_stats {
-            out.push_str(&format!("- `{dir}/` ({fc} files, {bc} blocks)\n"));
-        }
+        let items: Vec<render::TreeItem> = dir_stats
+            .iter()
+            .map(|(dir, fc, bc)| render::TreeItem {
+                label: format!("{dir:<16} {fc:>3} files   {bc:>4} blocks"),
+            })
+            .collect();
+        out.push('\n');
+        out.push_str(&render::render_tree_with_trunk("Modules", &items));
     }
 
     let symbols = store.get_exported_symbols(scope_arg)?;
     if !symbols.is_empty() {
-        out.push_str("\n### Public API\n\n");
-        for symbol in symbols.iter().take(20) {
-            let path = symbol.file_path.as_deref().unwrap_or("unknown");
-            out.push_str(&format!(
-                "- **{}** ({}) in `{}`\n",
-                symbol.name, symbol.kind, path
-            ));
-        }
+        let display_count = 20.min(symbols.len());
+        let mut items: Vec<render::TreeItem> = symbols
+            .iter()
+            .take(display_count)
+            .map(|s| {
+                let path = s.file_path.as_deref().unwrap_or("unknown");
+                render::TreeItem {
+                    label: format!(
+                        "{}  {:<24} {}",
+                        render::kind_label(&s.kind),
+                        s.name,
+                        path,
+                    ),
+                }
+            })
+            .collect();
         if symbols.len() > 20 {
-            out.push_str(&format!("- ... and {} more\n", symbols.len() - 20));
+            items.push(render::TreeItem {
+                label: format!("... {} more", symbols.len() - 20),
+            });
         }
+        out.push('\n');
+        out.push_str(&render::render_tree_with_trunk("Public API", &items));
     }
 
     let mut entry_paths: Vec<String> = symbols
@@ -333,10 +409,12 @@ fn build_overview(
     entry_paths.dedup();
 
     if !entry_paths.is_empty() {
-        out.push_str("\n### Entry Points\n\n");
-        for path in &entry_paths {
-            out.push_str(&format!("- `{path}`\n"));
-        }
+        let items: Vec<render::TreeItem> = entry_paths
+            .iter()
+            .map(|p| render::TreeItem { label: p.clone() })
+            .collect();
+        out.push('\n');
+        out.push_str(&render::render_tree_with_trunk("Entry Points", &items));
     }
 
     Ok(out)
@@ -538,7 +616,6 @@ mod tests {
     #[tokio::test]
     async fn test_ts_context_dependents_only() {
         let server = setup_server();
-        // validateToken is depended on by authenticateUser
         let params = Parameters(TsContextParams {
             symbol: "validateToken".to_string(),
             direction: Some("dependents".to_string()),
@@ -580,7 +657,7 @@ mod tests {
         });
         let result = server.ts_overview(params).await.unwrap();
         let text = text_content(&result);
-        assert!(text.contains("Project Overview"), "should contain header");
+        assert!(text.contains("\u{25C6} Overview"), "should contain header");
         assert!(text.contains("/test"), "should contain root path");
         assert!(text.contains("Languages"), "should contain language stats");
         assert!(
@@ -588,7 +665,7 @@ mod tests {
             "should list typescript language"
         );
         assert!(
-            text.contains("Module Structure"),
+            text.contains("Modules"),
             "should contain module structure"
         );
         assert!(
@@ -605,14 +682,12 @@ mod tests {
     async fn test_ts_overview_uses_cache() {
         let server = setup_server();
 
-        // First call populates cache
         let params = Parameters(TsOverviewParams {
             scope: None,
             depth: None,
         });
         let first = text_content(&server.ts_overview(params).await.unwrap());
 
-        // Second call should return cached content
         let params = Parameters(TsOverviewParams {
             scope: None,
             depth: None,

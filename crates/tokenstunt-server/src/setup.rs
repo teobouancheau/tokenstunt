@@ -3,37 +3,47 @@ use std::path::Path;
 use anyhow::Result;
 use tokenstunt_store::Store;
 
+use crate::render;
+
 pub fn build_setup_report(store: &Store, root: &Path, has_embeddings: bool) -> Result<String> {
     let file_count = store.file_count()?;
     let block_count = store.block_count()?;
     let (dep_total, dep_resolved) = store.dependency_count()?;
 
-    let mut out = String::from("## TokenStunt Setup\n\n");
+    let kw = 10;
+    let mut out = render::header("Setup", "TokenStunt");
+    out.push_str("\n\n");
 
-    out.push_str("### Index Health\n\n");
-    out.push_str(&format!("- **Root**: {}\n", root.display()));
-    out.push_str(&format!("- **Database**: {}\n", store.db_path().display()));
-    out.push_str(&format!("- **Files indexed**: {file_count}\n"));
-    out.push_str(&format!("- **Code blocks**: {block_count}\n"));
-    out.push_str(&format!(
-        "- **Dependencies**: {dep_total} ({dep_resolved} resolved)\n"
-    ));
+    out.push_str(&render::kv("Root", &root.display().to_string(), kw));
+    out.push('\n');
+    out.push_str(&render::kv("Database", &store.db_path().display().to_string(), kw));
+    out.push('\n');
+    out.push_str(&render::kv("Files", &file_count.to_string(), kw));
+    out.push('\n');
+    out.push_str(&render::kv("Blocks", &block_count.to_string(), kw));
+    out.push('\n');
+    out.push_str(&render::kv("Deps", &format!("{dep_total} ({dep_resolved} resolved)"), kw));
+    out.push('\n');
 
     if file_count == 0 {
-        out.push_str(
-            "\n> **Warning**: No files indexed. Run `tokenstunt index` or restart the server.\n",
-        );
+        out.push('\n');
+        out.push_str(&render::notice("No files indexed. Run `tokenstunt index` or restart the server."));
+        out.push('\n');
     }
 
     let lang_stats = store.get_language_stats()?;
     if !lang_stats.is_empty() {
-        out.push_str("\n### Languages Detected\n\n");
-        for (lang, count) in &lang_stats {
-            out.push_str(&format!("- {lang}: {count} files\n"));
-        }
+        out.push('\n');
+        let items: Vec<render::TreeItem> = lang_stats
+            .iter()
+            .map(|(lang, count)| render::TreeItem {
+                label: format!("{lang:<16} {count}"),
+            })
+            .collect();
+        out.push_str(&render::render_tree_with_trunk("Languages", &items));
     }
 
-    out.push_str("\n### Embeddings\n\n");
+    out.push('\n');
     if has_embeddings {
         let emb_count = store.embedding_count()?;
         let coverage = if block_count > 0 {
@@ -41,13 +51,25 @@ pub fn build_setup_report(store: &Store, root: &Path, has_embeddings: bool) -> R
         } else {
             0
         };
+        let status_label = format!("Configured");
+        let items = vec![render::TreeItem {
+            label: format!(
+                "Coverage  {}",
+                render::bar_with_label(emb_count as u64, block_count as u64, 20)
+            ),
+        }];
         out.push_str(&format!(
-            "- **Status**: Configured\n- **Vectors**: {emb_count}/{block_count} ({coverage}% coverage)\n"
+            "  \u{25C7} Embeddings{:>width$}\n  \u{2502}\n",
+            status_label,
+            width = 24
         ));
+        out.push_str(&render::render_list(&items));
+        let _ = coverage;
     } else {
-        out.push_str("- **Status**: Not configured\n\n");
-        out.push_str("To enable semantic search, run `/tokenstunt:configure` or create a config at `~/.cache/tokenstunt/<project>/config.toml`:\n\n");
-        out.push_str("```toml\n[embeddings]\nenabled = true\nprovider = \"ollama\"\nmodel = \"nomic-embed-text\"\nendpoint = \"http://localhost:11434\"\ndimensions = 768\n```\n");
+        out.push_str("  \u{25C7} Embeddings              Not configured\n");
+        out.push('\n');
+        out.push_str("  To enable semantic search, create a config at\n  `~/.cache/tokenstunt/<project>/config.toml`:\n\n");
+        out.push_str("  ```toml\n  [embeddings]\n  enabled = true\n  provider = \"ollama\"\n  model = \"nomic-embed-text\"\n  endpoint = \"http://localhost:11434\"\n  dimensions = 768\n  ```\n");
     }
 
     Ok(out)
@@ -86,7 +108,7 @@ mod tests {
         let report = build_setup_report(&store, &root, false).unwrap();
         assert!(report.contains("Not configured"));
         assert!(report.contains("config.toml"));
-        assert!(report.contains("Files indexed"));
+        assert!(report.contains("Files"));
     }
 
     #[test]
