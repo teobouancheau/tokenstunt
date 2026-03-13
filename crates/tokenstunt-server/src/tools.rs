@@ -192,10 +192,7 @@ impl TokenStuntServer {
                     .iter()
                     .map(|(block, kind)| {
                         let dep_path = block.file_path.as_deref().unwrap_or("unknown");
-                        let dep_loc = format!(
-                            "{dep_path}:{}-{}",
-                            block.start_line, block.end_line
-                        );
+                        let dep_loc = format!("{dep_path}:{}-{}", block.start_line, block.end_line);
                         render::TreeItem {
                             label: format!(
                                 "{}  {:<24} {:<28} {}",
@@ -223,10 +220,7 @@ impl TokenStuntServer {
                     .iter()
                     .map(|(block, kind)| {
                         let dep_path = block.file_path.as_deref().unwrap_or("unknown");
-                        let dep_loc = format!(
-                            "{dep_path}:{}-{}",
-                            block.start_line, block.end_line
-                        );
+                        let dep_loc = format!("{dep_path}:{}-{}", block.start_line, block.end_line);
                         render::TreeItem {
                             label: format!(
                                 "{}  {:<24} {:<28} {}",
@@ -365,12 +359,7 @@ fn build_overview(
             .map(|s| {
                 let path = s.file_path.as_deref().unwrap_or("unknown");
                 render::TreeItem {
-                    label: format!(
-                        "{}  {:<24} {}",
-                        render::kind_label(&s.kind),
-                        s.name,
-                        path,
-                    ),
+                    label: format!("{}  {:<24} {}", render::kind_label(&s.kind), s.name, path,),
                 }
             })
             .collect();
@@ -640,9 +629,7 @@ mod tests {
     #[tokio::test]
     async fn test_ts_overview() {
         let server = setup_server();
-        let params = Parameters(TsOverviewParams {
-            scope: None,
-        });
+        let params = Parameters(TsOverviewParams { scope: None });
         let result = server.ts_overview(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("\u{25C6} Overview"), "should contain header");
@@ -652,10 +639,7 @@ mod tests {
             text.contains("typescript"),
             "should list typescript language"
         );
-        assert!(
-            text.contains("Modules"),
-            "should contain module structure"
-        );
+        assert!(text.contains("Modules"), "should contain module structure");
         assert!(
             text.contains("Public API"),
             "should list public API symbols"
@@ -670,14 +654,10 @@ mod tests {
     async fn test_ts_overview_uses_cache() {
         let server = setup_server();
 
-        let params = Parameters(TsOverviewParams {
-            scope: None,
-        });
+        let params = Parameters(TsOverviewParams { scope: None });
         let first = text_content(&server.ts_overview(params).await.unwrap());
 
-        let params = Parameters(TsOverviewParams {
-            scope: None,
-        });
+        let params = Parameters(TsOverviewParams { scope: None });
         let second = text_content(&server.ts_overview(params).await.unwrap());
         assert_eq!(first, second);
     }

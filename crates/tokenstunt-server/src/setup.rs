@@ -16,18 +16,28 @@ pub fn build_setup_report(store: &Store, root: &Path, has_embeddings: bool) -> R
 
     out.push_str(&render::kv("Root", &root.display().to_string(), kw));
     out.push('\n');
-    out.push_str(&render::kv("Database", &store.db_path().display().to_string(), kw));
+    out.push_str(&render::kv(
+        "Database",
+        &store.db_path().display().to_string(),
+        kw,
+    ));
     out.push('\n');
     out.push_str(&render::kv("Files", &file_count.to_string(), kw));
     out.push('\n');
     out.push_str(&render::kv("Blocks", &block_count.to_string(), kw));
     out.push('\n');
-    out.push_str(&render::kv("Deps", &format!("{dep_total} ({dep_resolved} resolved)"), kw));
+    out.push_str(&render::kv(
+        "Deps",
+        &format!("{dep_total} ({dep_resolved} resolved)"),
+        kw,
+    ));
     out.push('\n');
 
     if file_count == 0 {
         out.push('\n');
-        out.push_str(&render::notice("No files indexed. Run `tokenstunt index` or restart the server."));
+        out.push_str(&render::notice(
+            "No files indexed. Run `tokenstunt index` or restart the server.",
+        ));
         out.push('\n');
     }
 

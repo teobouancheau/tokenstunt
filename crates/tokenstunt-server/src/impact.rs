@@ -140,9 +140,7 @@ pub fn format_impact(result: &ImpactResult) -> String {
         let items: Vec<render::TreeItem> = result
             .affected_files
             .iter()
-            .map(|p| render::TreeItem {
-                label: p.clone(),
-            })
+            .map(|p| render::TreeItem { label: p.clone() })
             .collect();
         out.push('\n');
         out.push_str(&render::render_tree_with_trunk("Affected Files", &items));

@@ -47,7 +47,9 @@ pub fn format_blocks(query: &str, blocks: &[(CodeBlock, Option<f64>)]) -> String
         format!("\"{}\"", query)
     };
     let mut out = render::header("Search", &hint);
-    out.push_str(&format!("                                   {count} results\n\n"));
+    out.push_str(&format!(
+        "                                   {count} results\n\n"
+    ));
 
     for (block, score) in blocks {
         out.push_str(&format_summary_row(block, *score));
@@ -143,7 +145,10 @@ mod tests {
             header_line.contains("unknown"),
             "missing file_path should show 'unknown'"
         );
-        assert_eq!(language, "text", "missing language should fallback to 'text'");
+        assert_eq!(
+            language, "text",
+            "missing language should fallback to 'text'"
+        );
     }
 
     #[test]
