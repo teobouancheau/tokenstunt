@@ -1,0 +1,240 @@
+use std::sync::Mutex;
+
+use console::Style;
+use indicatif::{ProgressBar, ProgressStyle};
+use tokenstunt_index::IndexProgress;
+
+const ORANGE_256: u8 = 173;
+
+fn accent() -> Style {
+    Style::new().color256(ORANGE_256)
+}
+
+fn dim() -> Style {
+    Style::new().dim()
+}
+
+fn bold() -> Style {
+    Style::new().white().bold()
+}
+
+pub struct IndicatifProgress {
+    bar: Mutex<Option<ProgressBar>>,
+}
+
+impl IndicatifProgress {
+    pub fn new() -> Self {
+        Self {
+            bar: Mutex::new(None),
+        }
+    }
+}
+
+impl IndexProgress for IndicatifProgress {
+    fn on_discover(&self, total_files: usize) {
+        let pb = ProgressBar::new(total_files as u64);
+        pb.set_style(
+            ProgressStyle::with_template(&format!(
+                " {}  [{{bar:24.{}}}]  {{pos}}/{{len}} files   {{msg}}",
+                accent().apply_to("Indexing"),
+                ORANGE_256,
+            ))
+            .unwrap()
+            .progress_chars("##-"),
+        );
+        if let Ok(mut lock) = self.bar.lock() {
+            *lock = Some(pb);
+        }
+    }
+
+    fn on_file_indexed(&self, path: &str) {
+        if let Ok(lock) = self.bar.lock() {
+            if let Some(pb) = lock.as_ref() {
+                pb.set_message(truncate_path(path, 40));
+                pb.inc(1);
+            }
+        }
+    }
+
+    fn on_file_skipped(&self, _path: &str) {
+        if let Ok(lock) = self.bar.lock() {
+            if let Some(pb) = lock.as_ref() {
+                pb.inc(1);
+            }
+        }
+    }
+
+    fn on_file_error(&self, _path: &str, _error: &str) {
+        if let Ok(lock) = self.bar.lock() {
+            if let Some(pb) = lock.as_ref() {
+                pb.inc(1);
+            }
+        }
+    }
+
+    fn on_complete(&self, _files: u64, _blocks: u64, _skipped: u64, _errors: u64) {
+        if let Ok(lock) = self.bar.lock() {
+            if let Some(pb) = lock.as_ref() {
+                pb.finish_and_clear();
+            }
+        }
+    }
+}
+
+pub fn print_index_summary(
+    files: u64,
+    blocks: u64,
+    skipped: u64,
+    deleted_files: u64,
+    errors: u64,
+) {
+    let a = accent();
+    let b = bold();
+
+    eprintln!(
+        "  {}  {} files, {} code blocks",
+        a.apply_to("Indexed"),
+        b.apply_to(format_number(files)),
+        b.apply_to(format_number(blocks)),
+    );
+
+    if skipped > 0 {
+        eprintln!(
+            "  {}  {} unchanged",
+            dim().apply_to("Skipped"),
+            dim().apply_to(format_number(skipped)),
+        );
+    }
+
+    if deleted_files > 0 {
+        let warn = Style::new().yellow();
+        eprintln!(
+            "  {}  {} stale files removed",
+            warn.apply_to("Cleaned"),
+            warn.apply_to(format_number(deleted_files)),
+        );
+    }
+
+    if errors > 0 {
+        let err = Style::new().red();
+        eprintln!(
+            "  {}  {} files failed",
+            err.apply_to("Errors "),
+            err.apply_to(format_number(errors)),
+        );
+    }
+}
+
+pub fn print_embed_summary(emb_count: i64, block_count: i64) {
+    let a = accent();
+    let b = bold();
+    let pct = if block_count > 0 {
+        (emb_count as f64 / block_count as f64 * 100.0) as u32
+    } else {
+        0
+    };
+    eprintln!(
+        "  {}  {}/{} vectors ({}%)",
+        a.apply_to("Embeds "),
+        b.apply_to(format_number(emb_count as u64)),
+        format_number(block_count as u64),
+        pct,
+    );
+}
+
+pub fn print_status(db_path: &std::path::Path, files: i64, blocks: i64) {
+    let a = accent();
+    let b = bold();
+    let d = dim();
+
+    let project_name = db_path
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+
+    eprintln!(
+        "  {}  {}",
+        a.apply_to("Index "),
+        b.apply_to(project_name),
+    );
+    eprintln!(
+        "  {}  {}",
+        d.apply_to("Path  "),
+        d.apply_to(db_path.display()),
+    );
+    eprintln!(
+        "  {}  {} indexed",
+        a.apply_to("Files "),
+        b.apply_to(format_number(files as u64)),
+    );
+    eprintln!(
+        "  {}  {} code blocks",
+        a.apply_to("Blocks"),
+        b.apply_to(format_number(blocks as u64)),
+    );
+}
+
+pub fn print_serve_banner(root: &std::path::Path, files: u64, blocks: u64, watcher_active: bool) {
+    let a = accent();
+    let d = dim();
+    let g = Style::new().green();
+
+    eprintln!(
+        "  {} v{}",
+        a.apply_to("TokenStunt").bold(),
+        env!("CARGO_PKG_VERSION"),
+    );
+    eprintln!(
+        "  {}  {}",
+        a.apply_to("Root   "),
+        d.apply_to(root.display()),
+    );
+    eprintln!(
+        "  {}  {} files, {} blocks",
+        a.apply_to("Index  "),
+        files,
+        blocks,
+    );
+    if watcher_active {
+        eprintln!("  {}  {}", a.apply_to("Watcher"), g.apply_to("active"));
+    }
+    eprintln!("  {}  {}", a.apply_to("MCP    "), g.apply_to("Ready on stdio"));
+}
+
+fn truncate_path(path: &str, max_len: usize) -> String {
+    if path.len() <= max_len {
+        return path.to_string();
+    }
+    let suffix = &path[path.len().saturating_sub(max_len.saturating_sub(3))..];
+    format!("...{suffix}")
+}
+
+fn format_number(n: u64) -> String {
+    if n < 1_000 {
+        return n.to_string();
+    }
+    let s = n.to_string();
+    let mut result = String::with_capacity(s.len() + s.len() / 3);
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(',');
+        }
+        result.push(c);
+    }
+    result.chars().rev().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_number() {
+        assert_eq!(format_number(0), "0");
+        assert_eq!(format_number(42), "42");
+        assert_eq!(format_number(999), "999");
+        assert_eq!(format_number(1_000), "1,000");
+        assert_eq!(format_number(1_234_567), "1,234,567");
+    }
+}
