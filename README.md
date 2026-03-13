@@ -1,10 +1,10 @@
-# TokenStunt
+# Token Stunt
 
 Smart code search MCP server for Claude Code. Indexes your codebase into searchable symbols and dependency graphs, served over the Model Context Protocol.
 
 ## What it does
 
-TokenStunt parses your source code with tree-sitter, extracts every function, class, interface, trait, enum, and constant, stores them in a SQLite FTS5 index, and serves them through 6 MCP tools.
+Token Stunt parses your source code with tree-sitter, extracts every function, class, interface, trait, enum, and constant, stores them in a SQLite FTS5 index, and serves them through 6 MCP tools.
 
 ### `ts_search`
 
@@ -97,7 +97,7 @@ MCP tool responses use Unicode compact blocks instead of markdown. Box-drawing c
 
 ### Live reactivity
 
-TokenStunt watches your filesystem and re-indexes changed files in real-time (500ms debounce). No manual re-indexing needed.
+Token Stunt watches your filesystem and re-indexes changed files in real-time (500ms debounce). No manual re-indexing needed.
 
 ### Dependency graph
 
@@ -121,7 +121,7 @@ Without embeddings, search uses pure BM25 keyword ranking.
 
 ### Startup reconciliation
 
-On every `serve` startup, TokenStunt compares file hashes against the stored index and only re-indexes what changed. Cold starts are fast.
+On every `serve` startup, Token Stunt compares file hashes against the stored index and only re-indexes what changed. Cold starts are fast.
 
 ### Transparent storage
 
