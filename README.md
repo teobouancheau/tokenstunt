@@ -60,9 +60,9 @@ Show every symbol and file affected by changing a given symbol.
 
 ## Supported languages
 
-**Built in:** TypeScript, TSX, JavaScript, Python, Rust, Go, Java, C, C++, Ruby
+**Built-in:** TypeScript, TSX, JavaScript, Python, Rust, Go, Java, C, C++, Ruby
 
-**Optional (feature gated):** Swift (`lang-swift`), Kotlin (`lang-kotlin`), Dart (`lang-dart`)
+**Optional (feature-gated):** Swift (`lang-swift`), Kotlin (`lang-kotlin`), Dart (`lang-dart`)
 
 ## Install
 
@@ -93,11 +93,11 @@ All CLI output uses colored, compact formatting. Indexing shows a live progress 
 
 ### Native Claude Code output
 
-MCP tool responses use Unicode compact blocks instead of markdown. Box drawing characters, score bars, tree connectors, and aligned columns. Renders cleanly in Claude Code's terminal.
+MCP tool responses use Unicode compact blocks instead of markdown. Box-drawing characters, score bars, tree connectors, and aligned columns. Renders cleanly in Claude Code's terminal.
 
 ### Live reactivity
 
-TokenStunt watches your filesystem and re indexes changed files in real time (500ms debounce). No manual re indexing needed.
+TokenStunt watches your filesystem and re-indexes changed files in real-time (500ms debounce). No manual re-indexing needed.
 
 ### Dependency graph
 
@@ -105,7 +105,7 @@ Import statements are extracted and stored. The dependency table tracks what eac
 
 ### Semantic search (optional)
 
-Configure a local embedding model (Ollama, LM Studio, or any OpenAI compatible endpoint) for hybrid BM25 + cosine ranking. Run `/tokenstunt:configure` in Claude Code, or create the config manually:
+Configure a local embedding model (Ollama, LM Studio, or any OpenAI-compatible endpoint) for hybrid BM25 + cosine ranking. Run `/tokenstunt:configure` in Claude Code, or create the config manually:
 
 ```toml
 # ~/.cache/tokenstunt/<project>/config.toml
@@ -121,7 +121,7 @@ Without embeddings, search uses pure BM25 keyword ranking.
 
 ### Startup reconciliation
 
-On every `serve` startup, TokenStunt compares file hashes against the stored index and only re indexes what changed. Cold starts are fast.
+On every `serve` startup, TokenStunt compares file hashes against the stored index and only re-indexes what changed. Cold starts are fast.
 
 ### Transparent storage
 
@@ -137,7 +137,7 @@ tokenstunt-server       MCP server (rmcp, stdio)
 tokenstunt-index        Indexer orchestrator, file walker, file watcher
 tokenstunt-search       BM25 keyword search + hybrid cosine ranking
 tokenstunt-parser       Tree-sitter AST extraction (13 languages)
-tokenstunt-embeddings   Embedding providers (Ollama, OpenAI compat)
+tokenstunt-embeddings   Embedding providers (Ollama, OpenAI-compat)
 tokenstunt-store        SQLite persistence (rusqlite, FTS5, WAL)
 ```
 
