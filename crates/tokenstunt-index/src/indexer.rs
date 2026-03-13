@@ -11,6 +11,7 @@ use tokenstunt_embeddings::EmbeddingProvider;
 use tokenstunt_parser::{Language, LanguageRegistry, ParsedSymbol, SymbolExtractor};
 use tokenstunt_store::{CodeBlockKind, Connection, Store};
 
+use crate::progress::IndexProgress;
 use crate::walker;
 
 pub struct Indexer {
@@ -53,7 +54,7 @@ impl Indexer {
         }
     }
 
-    pub fn index_directory(&self, root: &Path) -> Result<IndexStats> {
+    pub fn index_directory(&self, root: &Path, progress: &dyn IndexProgress) -> Result<IndexStats> {
         let root_str = root.to_str().context("non-UTF-8 path")?;
         let repo_name = root
             .file_name()
@@ -64,6 +65,7 @@ impl Indexer {
 
         let entries = walker::walk_directory(root)?;
         info!(files = entries.len(), "discovered files");
+        progress.on_discover(entries.len());
 
         let registry = LanguageRegistry::new()?;
 
@@ -87,6 +89,7 @@ impl Indexer {
                     Ok(s) => s,
                     Err(e) => {
                         warn!(path = %entry.path.display(), error = %e, "failed to read file");
+                        progress.on_file_error(&rel_path, &e.to_string());
                         stats.errors += 1;
                         continue;
                     }
@@ -98,6 +101,7 @@ impl Indexer {
                     self.store.get_file_hash_with_conn(conn, repo_id, &rel_path)
                     && existing_hash == content_hash
                 {
+                    progress.on_file_skipped(&rel_path);
                     stats.skipped += 1;
                     continue;
                 }
@@ -175,6 +179,7 @@ impl Indexer {
                     }
                 }
 
+                progress.on_file_indexed(&rel_path);
                 stats.files += 1;
             }
 
@@ -214,6 +219,8 @@ impl Indexer {
                 handles.push(handle);
             }
         }
+
+        progress.on_complete(stats.files, stats.blocks, stats.skipped, stats.errors);
 
         info!(
             files = stats.files,
@@ -633,6 +640,7 @@ pub struct ReindexStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::progress::NopProgress;
 
     fn write_test_files(dir: &Path) {
         let src = dir.join("src");
@@ -658,7 +666,7 @@ mod tests {
 
         let store = Store::open_in_memory().unwrap();
         let indexer = Indexer::new(store, None).unwrap();
-        let stats = indexer.index_directory(dir.path()).unwrap();
+        let stats = indexer.index_directory(dir.path(), &NopProgress).unwrap();
 
         assert!(stats.files >= 2);
         assert!(stats.blocks >= 2);
@@ -675,10 +683,10 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let indexer = Indexer::new(store, None).unwrap();
 
-        let stats1 = indexer.index_directory(dir.path()).unwrap();
+        let stats1 = indexer.index_directory(dir.path(), &NopProgress).unwrap();
         assert!(stats1.files >= 2);
 
-        let stats2 = indexer.index_directory(dir.path()).unwrap();
+        let stats2 = indexer.index_directory(dir.path(), &NopProgress).unwrap();
         assert!(stats2.skipped >= 2);
         assert_eq!(stats2.files, 0);
     }
@@ -697,7 +705,7 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let indexer = Indexer::new(store, None).unwrap();
 
-        indexer.index_directory(dir.path()).unwrap();
+        indexer.index_directory(dir.path(), &NopProgress).unwrap();
         let initial_count = indexer.store().block_count().unwrap();
         assert!(initial_count >= 1);
 
@@ -730,7 +738,7 @@ mod tests {
 
         let store = Store::open_in_memory().unwrap();
         let indexer = Indexer::new(store, None).unwrap();
-        indexer.index_directory(dir.path()).unwrap();
+        indexer.index_directory(dir.path(), &NopProgress).unwrap();
         assert!(indexer.store().file_count().unwrap() >= 2);
 
         // Delete one file
@@ -758,7 +766,7 @@ mod tests {
 
         let store = Store::open_in_memory().unwrap();
         let indexer = Indexer::new(store, None).unwrap();
-        indexer.index_directory(dir.path()).unwrap();
+        indexer.index_directory(dir.path(), &NopProgress).unwrap();
 
         let repo_id = indexer
             .store()
@@ -783,7 +791,7 @@ mod tests {
 
         let store = Store::open_in_memory().unwrap();
         let indexer = Indexer::new(store, None).unwrap();
-        indexer.index_directory(dir.path()).unwrap();
+        indexer.index_directory(dir.path(), &NopProgress).unwrap();
 
         // Modify the file
         std::fs::write(
@@ -812,7 +820,7 @@ mod tests {
 
         let store = Store::open_in_memory().unwrap();
         let indexer = Indexer::new(store, None).unwrap();
-        indexer.index_directory(dir.path()).unwrap();
+        indexer.index_directory(dir.path(), &NopProgress).unwrap();
 
         let stats = indexer
             .reindex_files(dir.path(), &[src.join("greet.ts")])
@@ -840,7 +848,7 @@ mod tests {
 
         let store = Store::open_in_memory().unwrap();
         let indexer = Indexer::new(store, None).unwrap();
-        indexer.index_directory(dir.path()).unwrap();
+        indexer.index_directory(dir.path(), &NopProgress).unwrap();
 
         let handler_blocks = indexer.store().lookup_symbol("handler", None).unwrap();
         assert!(!handler_blocks.is_empty());

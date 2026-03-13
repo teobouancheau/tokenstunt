@@ -78,7 +78,7 @@ mod tests {
 
         let store = Store::open_in_memory().unwrap();
         let indexer = Arc::new(Indexer::new(store, None).unwrap());
-        indexer.index_directory(dir.path()).unwrap();
+        indexer.index_directory(dir.path(), &crate::progress::NopProgress).unwrap();
 
         let _watcher = FileWatcher::start(Arc::clone(&indexer), dir.path().to_path_buf()).unwrap();
 
