@@ -7,6 +7,11 @@ edition.workspace = true
 name = "tokenstunt"
 path = "src/main.rs"
 
+[features]
+lang-swift = ["tokenstunt-parser/lang-swift", "tokenstunt-index/lang-swift"]
+lang-kotlin = ["tokenstunt-parser/lang-kotlin", "tokenstunt-index/lang-kotlin"]
+lang-dart = ["tokenstunt-parser/lang-dart", "tokenstunt-index/lang-dart"]
+
 [dependencies]
 tokenstunt-server = { path = "../tokenstunt-server" }
 rmcp = { version = "1", features = ["server", "transport-io"] }
@@ -24,6 +29,7 @@ tokenstunt-parser = { path = "../tokenstunt-parser" }
 tokenstunt-embeddings = { path = "../tokenstunt-embeddings" }
 indicatif = "0.17"
 console = "0.15"
+serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"

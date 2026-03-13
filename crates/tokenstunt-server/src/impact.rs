@@ -177,6 +177,7 @@ mod tests {
                 5,
                 "function funcA() {}",
                 "function funcA()",
+                "",
                 None,
             )
             .unwrap();
@@ -189,6 +190,7 @@ mod tests {
                 15,
                 "function funcB() { funcA(); }",
                 "function funcB()",
+                "",
                 None,
             )
             .unwrap();
@@ -204,6 +206,7 @@ mod tests {
                 5,
                 "function funcC() { funcB(); }",
                 "function funcC()",
+                "",
                 None,
             )
             .unwrap();
@@ -279,6 +282,7 @@ mod tests {
                 5,
                 "fn a() {}",
                 "fn a()",
+                "",
                 None,
             )
             .unwrap();
@@ -291,6 +295,7 @@ mod tests {
                 15,
                 "fn b() {}",
                 "fn b()",
+                "",
                 None,
             )
             .unwrap();
@@ -328,6 +333,105 @@ mod tests {
     }
 
     #[test]
+    fn test_symbol_not_found() {
+        let f = setup();
+        let result = walk_dependents(&f.store, "nonexistent", None).unwrap();
+        assert!(result.dependents.is_empty());
+        assert!(result.affected_files.is_empty());
+        let _ = (f.block_a, f.block_b, f.block_c);
+    }
+
+    #[test]
+    fn test_cycle_via_visited_continue() {
+        let store = Store::open_in_memory().unwrap();
+        let repo_id = store.ensure_repo("/test", "test").unwrap();
+        let file_id = store
+            .upsert_file(repo_id, "src/cycle.ts", 111, "typescript", 0)
+            .unwrap();
+
+        let a = store
+            .insert_code_block(
+                file_id,
+                "alpha",
+                CodeBlockKind::Function,
+                1,
+                5,
+                "fn alpha() {}",
+                "fn alpha()",
+                "",
+                None,
+            )
+            .unwrap();
+        let b = store
+            .insert_code_block(
+                file_id,
+                "beta",
+                CodeBlockKind::Function,
+                10,
+                15,
+                "fn beta() {}",
+                "fn beta()",
+                "",
+                None,
+            )
+            .unwrap();
+        let c = store
+            .insert_code_block(
+                file_id,
+                "gamma",
+                CodeBlockKind::Function,
+                20,
+                25,
+                "fn gamma() {}",
+                "fn gamma()",
+                "",
+                None,
+            )
+            .unwrap();
+
+        // alpha -> beta -> gamma -> alpha (cycle)
+        store
+            .insert_dependency(b, Some(a), "alpha", "call")
+            .unwrap();
+        store.insert_dependency(c, Some(b), "beta", "call").unwrap();
+        store
+            .insert_dependency(a, Some(c), "gamma", "call")
+            .unwrap();
+
+        let result = walk_dependents(&store, "alpha", Some(5)).unwrap();
+        // Should visit beta and gamma but not revisit alpha
+        assert!(
+            result.dependents.len() <= 2,
+            "cycle should be broken by visited set"
+        );
+        let names: Vec<&str> = result.dependents.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"beta"));
+        assert!(names.contains(&"gamma"));
+    }
+
+    #[test]
+    fn test_format_with_depth_gap() {
+        // Depth 1 has no nodes, depth 2 has nodes -> tests the `continue` on empty nodes
+        let result = ImpactResult {
+            source: "root".to_string(),
+            dependents: vec![ImpactNode {
+                name: "deep".to_string(),
+                kind: CodeBlockKind::Function,
+                file_path: "src/deep.ts".to_string(),
+                dep_kind: "call".to_string(),
+                depth: 2,
+            }],
+            affected_files: vec!["src/deep.ts".to_string()],
+        };
+        let output = format_impact(&result);
+        // Depth 1 should be skipped (empty), depth 2 should be rendered
+        assert!(output.contains("Depth 2"));
+        assert!(output.contains("deep"));
+        assert!(output.contains("Affected Files"));
+        assert!(output.contains("src/deep.ts"));
+    }
+
+    #[test]
     fn test_format_grouped() {
         let result = ImpactResult {
             source: "funcA".to_string(),
@@ -357,5 +461,15 @@ mod tests {
         assert!(output.contains("Affected Files"));
         assert!(output.contains("2 dependents"));
         assert!(output.contains("2 files"));
+    }
+
+    #[test]
+    fn test_format_impact_from_walk() {
+        let f = setup();
+        let result = walk_dependents(&f.store, "funcA", None).unwrap();
+        let output = format_impact(&result);
+        assert!(output.contains("Affected Files"));
+        assert!(output.contains("src/core.ts"));
+        assert!(output.contains("src/util.ts"));
     }
 }

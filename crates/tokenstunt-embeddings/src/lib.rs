@@ -1,7 +1,7 @@
 mod ollama;
 mod openai;
 
-pub use ollama::OllamaProvider;
+pub use ollama::{DetectedOllama, OllamaProvider, detect_ollama};
 pub use openai::OpenAiCompatProvider;
 
 use anyhow::{Result, bail};

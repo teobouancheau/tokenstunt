@@ -185,11 +185,13 @@ impl Store {
         end_line: u32,
         content: &str,
         signature: &str,
+        docstring: &str,
         parent_id: Option<i64>,
     ) -> Result<i64> {
         let conn = self.write_lock()?;
         self.insert_code_block_with_conn(
-            &conn, file_id, name, kind, start_line, end_line, content, signature, parent_id,
+            &conn, file_id, name, kind, start_line, end_line, content, signature, docstring,
+            parent_id,
         )
     }
 
@@ -204,11 +206,12 @@ impl Store {
         end_line: u32,
         content: &str,
         signature: &str,
+        docstring: &str,
         parent_id: Option<i64>,
     ) -> Result<i64> {
         conn.execute(
-            "INSERT INTO code_blocks (file_id, name, kind, start_line, end_line, content, signature, parent_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO code_blocks (file_id, name, kind, start_line, end_line, content, signature, docstring, parent_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 file_id,
                 name,
@@ -217,6 +220,7 @@ impl Store {
                 end_line,
                 content,
                 signature,
+                docstring,
                 parent_id,
             ],
         )?;
@@ -230,11 +234,11 @@ impl Store {
         kind: Option<&str>,
         scope: Option<&str>,
         limit: usize,
-    ) -> Result<Vec<CodeBlock>> {
+    ) -> Result<Vec<(CodeBlock, f64)>> {
         let conn = self.read_lock()?;
         let mut stmt = conn.prepare(
             "SELECT cb.id, cb.file_id, cb.name, cb.kind, cb.start_line, cb.end_line,
-                    cb.content, cb.signature, cb.parent_id, f.path, f.language
+                    cb.content, cb.signature, cb.docstring, cb.parent_id, f.path, f.language, rank
              FROM code_blocks_fts fts
              JOIN code_blocks cb ON cb.id = fts.rowid
              JOIN files f ON f.id = cb.file_id
@@ -246,14 +250,15 @@ impl Store {
              LIMIT ?5",
         )?;
 
-        let blocks = stmt
-            .query_map(
-                params![query, language, kind, scope, limit as i64],
-                Self::map_code_block,
-            )?
+        let rows = stmt
+            .query_map(params![query, language, kind, scope, limit as i64], |row| {
+                let block = Self::map_code_block(row)?;
+                let rank: f64 = row.get(12)?;
+                Ok((block, rank))
+            })?
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(blocks)
+        Ok(rows)
     }
 
     pub fn lookup_symbol(&self, name: &str, kind: Option<CodeBlockKind>) -> Result<Vec<CodeBlock>> {
@@ -271,7 +276,7 @@ impl Store {
             let kind_filter = k.as_str();
             let mut stmt = conn.prepare(
                 "SELECT cb.id, cb.file_id, cb.name, cb.kind, cb.start_line, cb.end_line,
-                        cb.content, cb.signature, cb.parent_id, f.path, f.language
+                        cb.content, cb.signature, cb.docstring, cb.parent_id, f.path, f.language
                  FROM code_blocks cb
                  JOIN files f ON f.id = cb.file_id
                  WHERE cb.name = ?1 AND cb.kind = ?2
@@ -284,7 +289,7 @@ impl Store {
         } else {
             let mut stmt = conn.prepare(
                 "SELECT cb.id, cb.file_id, cb.name, cb.kind, cb.start_line, cb.end_line,
-                        cb.content, cb.signature, cb.parent_id, f.path, f.language
+                        cb.content, cb.signature, cb.docstring, cb.parent_id, f.path, f.language
                  FROM code_blocks cb
                  JOIN files f ON f.id = cb.file_id
                  WHERE cb.name = ?1
@@ -301,7 +306,7 @@ impl Store {
         let conn = self.read_lock()?;
         let result = conn.query_row(
             "SELECT cb.id, cb.file_id, cb.name, cb.kind, cb.start_line, cb.end_line,
-                    cb.content, cb.signature, cb.parent_id, f.path, f.language
+                    cb.content, cb.signature, cb.docstring, cb.parent_id, f.path, f.language
              FROM code_blocks cb
              JOIN files f ON f.id = cb.file_id
              WHERE cb.id = ?1",
@@ -319,7 +324,7 @@ impl Store {
         let conn = self.read_lock()?;
         let mut stmt = conn.prepare(
             "SELECT cb.id, cb.file_id, cb.name, cb.kind, cb.start_line, cb.end_line,
-                    cb.content, cb.signature, cb.parent_id, f.path, f.language, d.kind
+                    cb.content, cb.signature, cb.docstring, cb.parent_id, f.path, f.language, d.kind
              FROM dependencies d
              JOIN code_blocks cb ON cb.id = d.source_block_id
              JOIN files f ON f.id = cb.file_id
@@ -327,7 +332,7 @@ impl Store {
         )?;
         let rows = stmt
             .query_map(params![block_id], |row| {
-                let dep_kind: String = row.get(11)?;
+                let dep_kind: String = row.get(12)?;
                 Ok((Self::map_code_block(row)?, dep_kind))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -338,7 +343,7 @@ impl Store {
         let conn = self.read_lock()?;
         let mut stmt = conn.prepare(
             "SELECT cb.id, cb.file_id, cb.name, cb.kind, cb.start_line, cb.end_line,
-                    cb.content, cb.signature, cb.parent_id, f.path, f.language, d.kind
+                    cb.content, cb.signature, cb.docstring, cb.parent_id, f.path, f.language, d.kind
              FROM dependencies d
              JOIN code_blocks cb ON cb.id = d.target_block_id
              JOIN files f ON f.id = cb.file_id
@@ -346,7 +351,7 @@ impl Store {
         )?;
         let rows = stmt
             .query_map(params![block_id], |row| {
-                let dep_kind: String = row.get(11)?;
+                let dep_kind: String = row.get(12)?;
                 Ok((Self::map_code_block(row)?, dep_kind))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -586,7 +591,7 @@ impl Store {
                 let prefix_pattern = format!("{prefix}%");
                 let mut stmt = conn.prepare(
                     "SELECT cb.id, cb.file_id, cb.name, cb.kind, cb.start_line, cb.end_line,
-                            cb.content, cb.signature, cb.parent_id, f.path, f.language
+                            cb.content, cb.signature, cb.docstring, cb.parent_id, f.path, f.language
                      FROM code_blocks cb
                      JOIN files f ON f.id = cb.file_id
                      WHERE cb.parent_id IS NULL AND f.path LIKE ?1
@@ -601,7 +606,7 @@ impl Store {
             None => {
                 let mut stmt = conn.prepare(
                     "SELECT cb.id, cb.file_id, cb.name, cb.kind, cb.start_line, cb.end_line,
-                            cb.content, cb.signature, cb.parent_id, f.path, f.language
+                            cb.content, cb.signature, cb.docstring, cb.parent_id, f.path, f.language
                      FROM code_blocks cb
                      JOIN files f ON f.id = cb.file_id
                      WHERE cb.parent_id IS NULL
@@ -661,6 +666,11 @@ impl Store {
         Ok(())
     }
 
+    pub fn get_repo_file_paths(&self, repo_id: i64) -> Result<Vec<String>> {
+        let conn = self.read_lock()?;
+        self.get_repo_file_paths_with_conn(&conn, repo_id)
+    }
+
     pub fn get_repo_file_paths_with_conn(
         &self,
         conn: &Connection,
@@ -706,6 +716,19 @@ impl Store {
         Ok(count)
     }
 
+    pub fn first_embedding_dimension(&self) -> Result<Option<usize>> {
+        let conn = self.read_lock()?;
+        let result = conn.query_row("SELECT vector FROM embeddings LIMIT 1", [], |row| {
+            let blob: Vec<u8> = row.get(0)?;
+            Ok(blob.len() / std::mem::size_of::<f32>())
+        });
+        match result {
+            Ok(dim) => Ok(Some(dim)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     pub fn dependency_count(&self) -> Result<(i64, i64)> {
         let conn = self.read_lock()?;
         let total: i64 =
@@ -723,10 +746,13 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT cb.id, cb.content
              FROM code_blocks cb
-             LEFT JOIN embeddings e ON e.block_id = cb.id
              WHERE cb.parent_id IS NULL
                AND cb.content != ''
-               AND (e.block_id IS NULL OR (?1 IS NOT NULL AND e.model != ?1))",
+               AND NOT EXISTS (
+                   SELECT 1 FROM embeddings e
+                   WHERE e.block_id = cb.id
+                     AND (?1 IS NULL OR e.model = ?1)
+               )",
         )?;
         let rows = stmt
             .query_map(params![model], |row| {
@@ -751,6 +777,49 @@ impl Store {
         Ok(rows)
     }
 
+    pub fn get_embeddings_by_block_ids(&self, block_ids: &[i64]) -> Result<Vec<(i64, Vec<f32>)>> {
+        if block_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.read_lock()?;
+        let placeholders: String = block_ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql =
+            format!("SELECT block_id, vector FROM embeddings WHERE block_id IN ({placeholders})");
+        let mut stmt = conn.prepare(&sql)?;
+        for (i, id) in block_ids.iter().enumerate() {
+            stmt.raw_bind_parameter(i + 1, *id)?;
+        }
+        let mut rows = stmt.raw_query();
+        let mut results = Vec::new();
+        while let Some(row) = rows.next()? {
+            let block_id: i64 = row.get(0)?;
+            let blob: Vec<u8> = row.get(1)?;
+            results.push((block_id, blob_to_vector(&blob)));
+        }
+        Ok(results)
+    }
+
+    pub fn get_blocks_by_file_path(&self, path: &str) -> Result<Vec<CodeBlock>> {
+        let conn = self.read_lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT cb.id, cb.file_id, cb.name, cb.kind, cb.start_line, cb.end_line,
+                    cb.content, cb.signature, cb.docstring, cb.parent_id, f.path, f.language
+             FROM code_blocks cb
+             JOIN files f ON f.id = cb.file_id
+             WHERE f.path = ?1
+             ORDER BY cb.start_line",
+        )?;
+        let rows = stmt
+            .query_map(params![path], Self::map_code_block)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     fn map_code_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<CodeBlock> {
         let kind_str: String = row.get(3)?;
         Ok(CodeBlock {
@@ -762,9 +831,10 @@ impl Store {
             end_line: row.get(5)?,
             content: row.get(6)?,
             signature: row.get(7)?,
-            parent_id: row.get(8)?,
-            file_path: row.get(9)?,
-            language: row.get(10)?,
+            docstring: row.get(8)?,
+            parent_id: row.get(9)?,
+            file_path: row.get(10)?,
+            language: row.get(11)?,
         })
     }
 }
@@ -817,6 +887,7 @@ mod tests {
                 5,
                 "function greet(name: string) { return `Hello ${name}`; }",
                 "function greet(name: string): string",
+                "",
                 None,
             )
             .unwrap();
@@ -853,6 +924,7 @@ mod tests {
                 10,
                 "function authenticateUser(token: string): User { ... }",
                 "function authenticateUser(token: string): User",
+                "",
                 None,
             )
             .unwrap();
@@ -860,7 +932,7 @@ mod tests {
             .search_fts("authenticate*", None, None, None, 10)
             .unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].name, "authenticateUser");
+        assert_eq!(results[0].0.name, "authenticateUser");
     }
 
     #[test]
@@ -908,6 +980,7 @@ mod tests {
                 15,
                 "function helper() {}",
                 "function helper()",
+                "",
                 None,
             )
             .unwrap();
@@ -1001,6 +1074,7 @@ mod tests {
                 5,
                 "function hello() {}",
                 "function hello()",
+                "",
                 None,
             )
             .unwrap();
@@ -1019,11 +1093,12 @@ mod tests {
         let repo_id = store.ensure_repo("/test", "test").unwrap();
 
         // Transaction should pass &Connection to closure
-        let result = store.write_transaction(|conn| {
-            conn.execute(
+        let result: Result<()> = store.write_transaction(|conn| {
+            let rows = conn.execute(
                 "INSERT INTO files (repo_id, path, content_hash, language, mtime_ns) VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![repo_id, "direct.ts", 999i64, "typescript", 0i64],
-            )?;
+            ).unwrap();
+            assert_eq!(rows, 1);
             Ok(())
         });
         assert!(result.is_ok());
@@ -1037,20 +1112,24 @@ mod tests {
 
         store
             .write_transaction(|conn| {
-                let file_id =
-                    store.upsert_file_with_conn(conn, repo_id, "a.ts", 1, "typescript", 0)?;
-                store.insert_code_block_with_conn(
-                    conn,
-                    file_id,
-                    "greet",
-                    CodeBlockKind::Function,
-                    1,
-                    5,
-                    "function greet() {}",
-                    "function greet()",
-                    None,
-                )?;
-                store.delete_file_blocks_with_conn(conn, file_id)?;
+                let file_id = store
+                    .upsert_file_with_conn(conn, repo_id, "a.ts", 1, "typescript", 0)
+                    .unwrap();
+                store
+                    .insert_code_block_with_conn(
+                        conn,
+                        file_id,
+                        "greet",
+                        CodeBlockKind::Function,
+                        1,
+                        5,
+                        "function greet() {}",
+                        "function greet()",
+                        "",
+                        None,
+                    )
+                    .unwrap();
+                store.delete_file_blocks_with_conn(conn, file_id).unwrap();
                 Ok(())
             })
             .unwrap();
@@ -1071,6 +1150,7 @@ mod tests {
                 15,
                 "fn helper() {}",
                 "fn helper()",
+                "",
                 None,
             )
             .unwrap();
@@ -1101,6 +1181,7 @@ mod tests {
                 15,
                 "fn unknown() {}",
                 "fn unknown()",
+                "",
                 None,
             )
             .unwrap();
@@ -1158,6 +1239,7 @@ mod tests {
                 5,
                 "fn main() {}",
                 "fn main()",
+                "",
                 None,
             )
             .unwrap();
@@ -1170,6 +1252,7 @@ mod tests {
                 5,
                 "fn lib() {}",
                 "fn lib()",
+                "",
                 None,
             )
             .unwrap();
@@ -1198,6 +1281,7 @@ mod tests {
                 20,
                 "class MyClass {}",
                 "class MyClass",
+                "",
                 None,
             )
             .unwrap();
@@ -1210,6 +1294,7 @@ mod tests {
                 10,
                 "myMethod() {}",
                 "myMethod()",
+                "",
                 Some(parent_id),
             )
             .unwrap();
@@ -1269,6 +1354,7 @@ mod tests {
                 5,
                 "function greet() { return 'hello'; }",
                 "function greet()",
+                "",
                 None,
             )
             .unwrap();
@@ -1283,6 +1369,7 @@ mod tests {
                 10,
                 "function farewell() { return 'bye'; }",
                 "function farewell()",
+                "",
                 None,
             )
             .unwrap();
@@ -1297,6 +1384,7 @@ mod tests {
                 4,
                 "function inner() {}",
                 "function inner()",
+                "",
                 Some(block_a),
             )
             .unwrap();
@@ -1327,6 +1415,69 @@ mod tests {
             .unwrap();
         assert_eq!(matching.len(), 1);
         assert_eq!(matching[0].0, block_b);
+
+        // Regression: block_a now has model-v1 embedding, add model-v2 embedding too
+        // (simulates INSERT OR REPLACE, but embeddings table is keyed on block_id
+        // so this replaces the v1 embedding with v2)
+        store
+            .insert_embedding(block_a, &[0.3, 0.4], "model-v2")
+            .unwrap();
+
+        // Asking for model-v2: block_a has it, only block_b missing
+        let after_switch = store
+            .get_blocks_without_embeddings(Some("model-v2"))
+            .unwrap();
+        assert_eq!(after_switch.len(), 1);
+        assert_eq!(after_switch[0].0, block_b);
+
+        // Asking for model-v1: block_a was replaced by v2, so both are missing for v1
+        let old_model = store
+            .get_blocks_without_embeddings(Some("model-v1"))
+            .unwrap();
+        assert_eq!(old_model.len(), 2);
+    }
+
+    #[test]
+    fn test_get_blocks_without_embeddings_excludes_empty_content() {
+        let store = Store::open_in_memory().unwrap();
+        let repo_id = store.ensure_repo("/test", "test").unwrap();
+        let file_id = store
+            .upsert_file(repo_id, "src/main.ts", 1, "typescript", 0)
+            .unwrap();
+
+        // Block with empty content
+        store
+            .insert_code_block(
+                file_id,
+                "empty",
+                CodeBlockKind::Function,
+                1,
+                2,
+                "",
+                "function empty()",
+                "",
+                None,
+            )
+            .unwrap();
+
+        // Block with actual content
+        let real_id = store
+            .insert_code_block(
+                file_id,
+                "real",
+                CodeBlockKind::Function,
+                3,
+                6,
+                "function real() { return 42; }",
+                "function real()",
+                "",
+                None,
+            )
+            .unwrap();
+
+        let missing = store.get_blocks_without_embeddings(None).unwrap();
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0].0, real_id);
     }
 
     #[test]
@@ -1386,6 +1537,22 @@ mod tests {
     }
 
     #[test]
+    fn test_first_embedding_dimension_empty() {
+        let f = setup();
+        assert_eq!(f.store.first_embedding_dimension().unwrap(), None);
+    }
+
+    #[test]
+    fn test_first_embedding_dimension_returns_correct_size() {
+        let f = setup();
+        let vector = vec![0.1_f32, 0.2, 0.3, 0.4];
+        f.store
+            .insert_embedding(f.block_id, &vector, "test-model")
+            .unwrap();
+        assert_eq!(f.store.first_embedding_dimension().unwrap(), Some(4));
+    }
+
+    #[test]
     fn test_dependency_count() {
         let f = setup();
         assert_eq!(f.store.dependency_count().unwrap(), (0, 0));
@@ -1400,6 +1567,7 @@ mod tests {
                 15,
                 "fn helper() {}",
                 "fn helper()",
+                "",
                 None,
             )
             .unwrap();
@@ -1416,6 +1584,43 @@ mod tests {
     }
 
     #[test]
+    fn test_delete_file_by_path_with_conn() {
+        let f = setup();
+        assert_eq!(f.store.file_count().unwrap(), 1);
+
+        let deleted = f
+            .store
+            .write_transaction(|conn| {
+                f.store
+                    .delete_file_by_path_with_conn(conn, f.repo_id, "src/main.ts")
+            })
+            .unwrap();
+        assert!(deleted);
+        assert_eq!(f.store.file_count().unwrap(), 0);
+
+        // Deleting again should return false
+        let deleted_again = f
+            .store
+            .write_transaction(|conn| {
+                f.store
+                    .delete_file_by_path_with_conn(conn, f.repo_id, "src/main.ts")
+            })
+            .unwrap();
+        assert!(!deleted_again);
+    }
+
+    #[test]
+    fn test_get_repo_file_paths_with_conn_empty() {
+        let store = Store::open_in_memory().unwrap();
+        let repo_id = store.ensure_repo("/empty", "empty").unwrap();
+
+        let paths = store
+            .write_transaction(|conn| store.get_repo_file_paths_with_conn(conn, repo_id))
+            .unwrap();
+        assert!(paths.is_empty());
+    }
+
+    #[test]
     fn test_open_file_db() {
         let dir = std::env::temp_dir().join("tokenstunt_test_open_file");
         let _ = std::fs::remove_file(&dir);
@@ -1426,5 +1631,365 @@ mod tests {
         store.ensure_repo("/test", "test").unwrap();
 
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    // --- Error path tests ---
+    // These cover the `?` error propagation and `Err(e) => Err(e.into())` branches
+    // by dropping tables to cause SQL failures.
+
+    fn drop_table(store: &Store, table: &str) {
+        store
+            .write_transaction(|conn| {
+                conn.execute_batch(&format!("DROP TABLE IF EXISTS {table}"))
+                    .unwrap();
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_ensure_repo_with_conn_error() {
+        let store = Store::open_in_memory().unwrap();
+        drop_table(&store, "repos");
+        let err = store.ensure_repo("/test", "test");
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_upsert_file_with_conn_error() {
+        let store = Store::open_in_memory().unwrap();
+        let repo_id = store.ensure_repo("/test", "test").unwrap();
+        drop_table(&store, "files");
+        let err = store.upsert_file(repo_id, "a.ts", 1, "typescript", 0);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_get_file_hash_error() {
+        let store = Store::open_in_memory().unwrap();
+        drop_table(&store, "files");
+        let err = store.get_file_hash(1, "a.ts");
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_delete_file_blocks_error() {
+        let store = Store::open_in_memory().unwrap();
+        drop_table(&store, "code_blocks");
+        let err = store.delete_file_blocks(1);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_insert_code_block_error() {
+        let store = Store::open_in_memory().unwrap();
+        drop_table(&store, "code_blocks");
+        let err = store.insert_code_block(
+            1,
+            "fn",
+            CodeBlockKind::Function,
+            1,
+            5,
+            "content",
+            "sig",
+            "",
+            None,
+        );
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_search_fts_error() {
+        let store = Store::open_in_memory().unwrap();
+        // Drop the FTS table to cause an error
+        store
+            .write_transaction(|conn| {
+                conn.execute_batch("DROP TABLE IF EXISTS code_blocks_fts")
+                    .unwrap();
+                Ok(())
+            })
+            .unwrap();
+        let err = store.search_fts("test", None, None, None, 10);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_lookup_symbol_with_kind_error() {
+        let store = Store::open_in_memory().unwrap();
+        drop_table(&store, "code_blocks");
+        let err = store.lookup_symbol("test", Some(CodeBlockKind::Function));
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_lookup_symbol_without_kind_error() {
+        let store = Store::open_in_memory().unwrap();
+        drop_table(&store, "code_blocks");
+        let err = store.lookup_symbol("test", None);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_get_block_by_id_error() {
+        let store = Store::open_in_memory().unwrap();
+        drop_table(&store, "code_blocks");
+        let err = store.get_block_by_id(1);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_insert_dependency_error() {
+        let store = Store::open_in_memory().unwrap();
+        drop_table(&store, "dependencies");
+        let err = store.insert_dependency(1, Some(2), "target", "call");
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_delete_block_dependencies_error() {
+        let store = Store::open_in_memory().unwrap();
+        drop_table(&store, "dependencies");
+        let err = store.delete_block_dependencies(1);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_get_unresolved_dependencies_error() {
+        let store = Store::open_in_memory().unwrap();
+        drop_table(&store, "dependencies");
+        let err = store.get_unresolved_dependencies();
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_resolve_dependency_error() {
+        let store = Store::open_in_memory().unwrap();
+        drop_table(&store, "dependencies");
+        let err = store.resolve_dependency(1, "target", 2);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_delete_file_by_path_error() {
+        let store = Store::open_in_memory().unwrap();
+        drop_table(&store, "files");
+        let err =
+            store.write_transaction(|conn| store.delete_file_by_path_with_conn(conn, 1, "a.ts"));
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_delete_stale_files_error() {
+        let store = Store::open_in_memory().unwrap();
+        drop_table(&store, "files");
+        let paths = vec!["a.ts".to_string()];
+        let err = store.delete_stale_files(1, &paths);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_get_overview_cache_error() {
+        let store = Store::open_in_memory().unwrap();
+        drop_table(&store, "overview_cache");
+        let err = store.get_overview_cache("scope", 1);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_invalidate_overview_cache_error() {
+        let store = Store::open_in_memory().unwrap();
+        drop_table(&store, "overview_cache");
+        let err = store.invalidate_overview_cache("scope");
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_get_embedding_error() {
+        let store = Store::open_in_memory().unwrap();
+        drop_table(&store, "embeddings");
+        let err = store.get_embedding(1);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_dependency_count_error() {
+        let store = Store::open_in_memory().unwrap();
+        drop_table(&store, "dependencies");
+        let err = store.dependency_count();
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_delete_stale_files_empty_paths() {
+        let f = setup();
+        let deleted = f
+            .store
+            .write_transaction(|conn| f.store.delete_stale_files_with_conn(conn, f.repo_id, &[]))
+            .unwrap();
+        assert_eq!(deleted, 0);
+    }
+
+    #[test]
+    fn test_ensure_repo_query_row_error() {
+        let store = Store::open_in_memory().unwrap();
+        // Add a trigger that deletes the row after insert, so the SELECT finds nothing
+        store
+            .write_transaction(|conn| {
+                conn.execute_batch(
+                    "CREATE TRIGGER delete_after_insert AFTER INSERT ON repos
+                     BEGIN DELETE FROM repos WHERE id = NEW.id; END;",
+                )
+                .unwrap();
+                Ok(())
+            })
+            .unwrap();
+        let err = store.ensure_repo("/new-path", "new-name");
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_upsert_file_query_row_error() {
+        let store = Store::open_in_memory().unwrap();
+        let repo_id = store.ensure_repo("/test", "test").unwrap();
+        // Add a trigger that deletes the row after insert, so the SELECT finds nothing
+        store
+            .write_transaction(|conn| {
+                conn.execute_batch(
+                    "CREATE TRIGGER delete_file_after_insert AFTER INSERT ON files
+                     BEGIN DELETE FROM files WHERE id = NEW.id; END;",
+                )
+                .unwrap();
+                Ok(())
+            })
+            .unwrap();
+        let err = store.upsert_file(repo_id, "test.ts", 1, "typescript", 0);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_search_fts_query_map_error() {
+        let store = Store::open_in_memory().unwrap();
+        // Pass an invalid FTS5 MATCH expression that prepare accepts but execution rejects
+        let err = store.search_fts("", None, None, None, 10);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_lookup_symbol_with_kind_prepare_error() {
+        let store = Store::open_in_memory().unwrap();
+        // Drop both tables to guarantee prepare fails on the JOIN
+        drop_table(&store, "files");
+        drop_table(&store, "code_blocks");
+        let err = store.lookup_symbol("test", Some(CodeBlockKind::Function));
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_lookup_symbol_without_kind_prepare_error() {
+        let store = Store::open_in_memory().unwrap();
+        drop_table(&store, "files");
+        drop_table(&store, "code_blocks");
+        let err = store.lookup_symbol("test", None);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_get_unresolved_dependencies_prepare_error() {
+        let store = Store::open_in_memory().unwrap();
+        // Drop via write_transaction to ensure it's committed
+        store
+            .write_transaction(|conn| {
+                conn.execute_batch("DROP TABLE IF EXISTS dependencies")
+                    .unwrap();
+                Ok(())
+            })
+            .unwrap();
+        let err = store.get_unresolved_dependencies();
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_dependency_count_second_query_error() {
+        let store = Store::open_in_memory().unwrap();
+        // Create a view that only supports the first COUNT query pattern
+        // by replacing dependencies with a view that errors on the WHERE clause
+        store
+            .write_transaction(|conn| {
+                conn.execute_batch("DROP TABLE IF EXISTS dependencies")
+                    .unwrap();
+                // Create a view where COUNT(*) works but COUNT(*) WHERE resolved=1
+                // will also work, so instead we drop and create a table
+                // with a missing 'resolved' column
+                conn.execute_batch(
+                    "CREATE TABLE dependencies (
+                        source_block_id INTEGER,
+                        target_block_id INTEGER,
+                        target_name TEXT,
+                        kind TEXT
+                    )",
+                )
+                .unwrap();
+                Ok(())
+            })
+            .unwrap();
+        // COUNT(*) succeeds, but COUNT(*) WHERE resolved = 1 fails (no resolved column)
+        let err = store.dependency_count();
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_get_blocks_by_file_path() {
+        let f = setup();
+        let blocks = f.store.get_blocks_by_file_path("src/main.ts").unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].name, "greet");
+        assert_eq!(blocks[0].file_path.as_deref(), Some("src/main.ts"));
+    }
+
+    #[test]
+    fn test_get_blocks_by_file_path_not_found() {
+        let f = setup();
+        let blocks = f.store.get_blocks_by_file_path("nonexistent.ts").unwrap();
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn test_get_blocks_by_file_path_ordered_by_line() {
+        let store = Store::open_in_memory().unwrap();
+        let repo_id = store.ensure_repo("/test", "test").unwrap();
+        let file_id = store
+            .upsert_file(repo_id, "src/ordered.ts", 111, "typescript", 0)
+            .unwrap();
+        store
+            .insert_code_block(
+                file_id,
+                "second",
+                CodeBlockKind::Function,
+                10,
+                20,
+                "function second() {}",
+                "function second()",
+                "",
+                None,
+            )
+            .unwrap();
+        store
+            .insert_code_block(
+                file_id,
+                "first",
+                CodeBlockKind::Function,
+                1,
+                5,
+                "function first() {}",
+                "function first()",
+                "",
+                None,
+            )
+            .unwrap();
+
+        let blocks = store.get_blocks_by_file_path("src/ordered.ts").unwrap();
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].name, "first");
+        assert_eq!(blocks[1].name, "second");
     }
 }

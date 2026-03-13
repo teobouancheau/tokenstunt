@@ -27,3 +27,26 @@ impl EmbeddingProgress for NopProgress {
     fn on_batch_complete(&self, _batch_size: u64) {}
     fn on_complete(&self, _total: u64) {}
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_nop_index_progress_methods() {
+        let p = NopProgress;
+        p.on_discover(10);
+        p.on_file_indexed("src/main.ts");
+        p.on_file_skipped("src/lib.ts");
+        p.on_file_error("src/bad.ts", "permission denied");
+        IndexProgress::on_complete(&p, 5, 10, 2, 1);
+    }
+
+    #[test]
+    fn test_nop_embedding_progress_methods() {
+        let p = NopProgress;
+        EmbeddingProgress::on_start(&p, 100);
+        EmbeddingProgress::on_batch_complete(&p, 32);
+        EmbeddingProgress::on_complete(&p, 100);
+    }
+}

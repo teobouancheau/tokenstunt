@@ -124,20 +124,122 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore]
-    async fn test_openai_compat_embed() {
-        let provider = OpenAiCompatProvider::new(
-            "http://localhost:8080",
-            "text-embedding-3-small",
-            1536,
-            None,
-        );
-        provider.health_check().await.unwrap();
+    async fn test_embed_batch_single_text() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/v1/embeddings")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "model": "text-embedding-3-small",
+                "input": ["hello world"]
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "data": [{"embedding": [0.1, 0.2, 0.3]}]
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let provider = OpenAiCompatProvider::new(&server.url(), "text-embedding-3-small", 3, None);
         let vecs = provider
             .embed_batch(&["hello world".to_string()])
             .await
             .unwrap();
+
         assert_eq!(vecs.len(), 1);
-        assert_eq!(vecs[0].len(), 1536);
+        assert_eq!(vecs[0], vec![0.1, 0.2, 0.3]);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_embed_batch_multiple_texts() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/v1/embeddings")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "model": "text-embedding-3-small",
+                "input": ["hello", "world"]
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "data": [
+                        {"embedding": [0.1, 0.2]},
+                        {"embedding": [0.3, 0.4]}
+                    ]
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let provider = OpenAiCompatProvider::new(&server.url(), "text-embedding-3-small", 2, None);
+        let vecs = provider
+            .embed_batch(&["hello".to_string(), "world".to_string()])
+            .await
+            .unwrap();
+
+        assert_eq!(vecs.len(), 2);
+        assert_eq!(vecs[0], vec![0.1, 0.2]);
+        assert_eq!(vecs[1], vec![0.3, 0.4]);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_health_check_success() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/v1/models")
+            .with_status(200)
+            .with_body("{}")
+            .create_async()
+            .await;
+
+        let provider = OpenAiCompatProvider::new(&server.url(), "text-embedding-3-small", 3, None);
+        provider.health_check().await.unwrap();
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_health_check_failure() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/v1/models")
+            .with_status(500)
+            .with_body("internal server error")
+            .create_async()
+            .await;
+
+        let provider = OpenAiCompatProvider::new(&server.url(), "text-embedding-3-small", 3, None);
+        let result = provider.health_check().await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("health check failed"));
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_embed_batch_server_error() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/v1/embeddings")
+            .with_status(500)
+            .with_body("rate limit exceeded")
+            .create_async()
+            .await;
+
+        let provider = OpenAiCompatProvider::new(&server.url(), "text-embedding-3-small", 3, None);
+        let result = provider.embed_batch(&["hello".to_string()]).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("failed with status"));
+        assert!(err.contains("rate limit exceeded"));
+        mock.assert_async().await;
     }
 }
