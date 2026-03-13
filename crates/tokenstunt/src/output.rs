@@ -300,4 +300,47 @@ mod tests {
         assert_eq!(format_number(1_000), "1,000");
         assert_eq!(format_number(1_234_567), "1,234,567");
     }
+
+    #[test]
+    fn test_embedding_progress_accumulates_on_multiple_starts() {
+        use tokenstunt_index::EmbeddingProgress;
+
+        let progress = IndicatifEmbeddingProgress::new();
+
+        // First wave: 10 blocks
+        progress.on_start(10);
+        {
+            let lock = progress.bar.lock().unwrap();
+            let pb = lock.as_ref().unwrap();
+            assert_eq!(pb.length(), Some(10));
+        }
+
+        // Simulate partial progress
+        progress.on_batch_complete(5);
+
+        // Second wave (watcher fires): 8 more blocks
+        progress.on_start(8);
+        {
+            let lock = progress.bar.lock().unwrap();
+            let pb = lock.as_ref().unwrap();
+            assert_eq!(pb.length(), Some(18));
+            assert_eq!(pb.position(), 5);
+        }
+
+        // First wave completes (10 total) but bar has 18 total, should NOT clear
+        progress.on_complete(10);
+        {
+            let lock = progress.bar.lock().unwrap();
+            assert!(lock.is_some(), "bar should not be cleared yet");
+        }
+
+        // Finish all remaining work
+        progress.on_batch_complete(13);
+        progress.on_complete(8);
+        {
+            let lock = progress.bar.lock().unwrap();
+            let pb = lock.as_ref().unwrap();
+            assert!(pb.is_finished(), "bar should be finished when all done");
+        }
+    }
 }

@@ -1330,6 +1330,26 @@ mod tests {
             .unwrap();
         assert_eq!(matching.len(), 1);
         assert_eq!(matching[0].0, block_b);
+
+        // Regression: block_a now has model-v1 embedding, add model-v2 embedding too
+        // (simulates INSERT OR REPLACE, but embeddings table is keyed on block_id
+        // so this replaces the v1 embedding with v2)
+        store
+            .insert_embedding(block_a, &[0.3, 0.4], "model-v2")
+            .unwrap();
+
+        // Asking for model-v2: block_a has it, only block_b missing
+        let after_switch = store
+            .get_blocks_without_embeddings(Some("model-v2"))
+            .unwrap();
+        assert_eq!(after_switch.len(), 1);
+        assert_eq!(after_switch[0].0, block_b);
+
+        // Asking for model-v1: block_a was replaced by v2, so both are missing for v1
+        let old_model = store
+            .get_blocks_without_embeddings(Some("model-v1"))
+            .unwrap();
+        assert_eq!(old_model.len(), 2);
     }
 
     #[test]
