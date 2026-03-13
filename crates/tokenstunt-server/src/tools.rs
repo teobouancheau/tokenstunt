@@ -177,7 +177,7 @@ impl TokenStuntServer {
         let location = format!("{file_path}:{}-{}", symbol.start_line, symbol.end_line);
         let language = symbol.language.as_deref().unwrap_or("text");
 
-        let mut output = render::header("Context", &format!("{}      {}", p.symbol, location));
+        let mut output = render::header("Context", &format!("{}  {}", p.symbol, location));
         output.push_str("\n\n");
         output.push_str(&render::code_block(language, &symbol.content));
 
@@ -311,12 +311,11 @@ fn build_overview(
     let file_count = store.file_count()?;
     let block_count = store.block_count()?;
 
-    let kw = 10;
     let mut out = render::header("Overview", &root.display().to_string());
     out.push_str("\n\n");
-    out.push_str(&render::kv("Files", &file_count.to_string(), kw));
+    out.push_str(&render::kv_line("Files", &file_count.to_string()));
     out.push('\n');
-    out.push_str(&render::kv("Blocks", &block_count.to_string(), kw));
+    out.push_str(&render::kv_line("Code Blocks", &block_count.to_string()));
     out.push('\n');
 
     let lang_stats = store.get_language_stats()?;
@@ -406,11 +405,11 @@ impl rmcp::handler::server::ServerHandler for TokenStuntServer {
         InitializeResult::new(capabilities)
             .with_server_info(
                 Implementation::new("tokenstunt", env!("CARGO_PKG_VERSION"))
-                    .with_title("TokenStunt")
+                    .with_title("Token Stunt")
                     .with_description("Smart code search for Claude Code. Finds the exact code you need — saves 95% of tokens.")
             )
             .with_instructions(
-                "TokenStunt provides AST-level semantic code search. Use ts_search instead of Grep+Read when looking for code by concept — it returns exact symbol bodies, saving 95% of tokens. Use ts_symbol for exact name lookups. Use ts_context to understand what a symbol calls and what calls it. Use ts_impact before refactoring to understand blast radius. Use ts_overview to orient in the project. Use ts_setup to check index health. Only use Read for files you need to modify. Recommended workflow: ts_overview → ts_search → ts_symbol → ts_context/ts_impact → Read."
+                "Token Stunt provides AST-level semantic code search. Use ts_search instead of Grep+Read when looking for code by concept — it returns exact symbol bodies, saving 95% of tokens. Use ts_symbol for exact name lookups. Use ts_context to understand what a symbol calls and what calls it. Use ts_impact before refactoring to understand blast radius. Use ts_overview to orient in the project. Use ts_setup to check index health. Only use Read for files you need to modify. Recommended workflow: ts_overview → ts_search → ts_symbol → ts_context/ts_impact → Read."
             )
     }
 }

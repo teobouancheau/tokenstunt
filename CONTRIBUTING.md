@@ -1,6 +1,6 @@
-# Contributing to TokenStunt
+# Contributing to Token Stunt
 
-Thanks for your interest in contributing to TokenStunt.
+Thanks for your interest in contributing to Token Stunt.
 
 ## Getting Started
 

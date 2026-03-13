@@ -22,7 +22,7 @@ You will receive a response within 48 hours. We will work with you to understand
 
 ## Scope
 
-TokenStunt runs locally and processes code on your machine. Security concerns include:
+Token Stunt runs locally and processes code on your machine. Security concerns include:
 
 - SQL injection via crafted file names or code content
 - Path traversal in file walker

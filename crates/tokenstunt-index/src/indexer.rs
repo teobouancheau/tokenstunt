@@ -41,6 +41,21 @@ impl Indexer {
         self.embedder.as_ref()
     }
 
+    fn spawn_embeddings_if_needed(&self, embedding_work: Vec<(i64, String)>) {
+        if !embedding_work.is_empty()
+            && let Some(embedder) = &self.embedder
+        {
+            let handle = spawn_embedding_task(
+                self.store.db_path().to_path_buf(),
+                Arc::clone(embedder),
+                embedding_work,
+            );
+            if let Ok(mut handles) = self.embedding_handles.lock() {
+                handles.push(handle);
+            }
+        }
+    }
+
     pub async fn await_embeddings(&self) {
         let handles: Vec<_> = {
             let mut lock = self
@@ -209,18 +224,7 @@ impl Indexer {
             Ok(stats)
         })?;
 
-        if !embedding_work.is_empty()
-            && let Some(embedder) = &self.embedder
-        {
-            let handle = spawn_embedding_task(
-                self.store.db_path().to_path_buf(),
-                Arc::clone(embedder),
-                embedding_work,
-            );
-            if let Ok(mut handles) = self.embedding_handles.lock() {
-                handles.push(handle);
-            }
-        }
+        self.spawn_embeddings_if_needed(embedding_work);
 
         progress.on_complete(stats.files, stats.blocks, stats.skipped, stats.errors);
 
@@ -310,18 +314,7 @@ impl Indexer {
             Ok(stats)
         })?;
 
-        if !embedding_work.is_empty()
-            && let Some(embedder) = &self.embedder
-        {
-            let handle = spawn_embedding_task(
-                self.store.db_path().to_path_buf(),
-                Arc::clone(embedder),
-                embedding_work,
-            );
-            if let Ok(mut handles) = self.embedding_handles.lock() {
-                handles.push(handle);
-            }
-        }
+        self.spawn_embeddings_if_needed(embedding_work);
 
         info!(
             updated = stats.updated,
@@ -411,18 +404,7 @@ impl Indexer {
             Ok(stats)
         })?;
 
-        if !embedding_work.is_empty()
-            && let Some(embedder) = &self.embedder
-        {
-            let handle = spawn_embedding_task(
-                self.store.db_path().to_path_buf(),
-                Arc::clone(embedder),
-                embedding_work,
-            );
-            if let Ok(mut handles) = self.embedding_handles.lock() {
-                handles.push(handle);
-            }
-        }
+        self.spawn_embeddings_if_needed(embedding_work);
 
         info!(
             reindexed = stats.reindexed,

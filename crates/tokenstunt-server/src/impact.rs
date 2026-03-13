@@ -96,7 +96,7 @@ pub fn format_impact(result: &ImpactResult) -> String {
     let mut out = render::header(
         "Impact",
         &format!(
-            "{}                    {} dependents   {} files",
+            "{}  {} dependents, {} files",
             result.source, dep_count, file_count
         ),
     );

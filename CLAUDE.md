@@ -1,4 +1,4 @@
-# TokenStunt
+# Token Stunt
 
 ## Commands
 - Build: `cargo build`
