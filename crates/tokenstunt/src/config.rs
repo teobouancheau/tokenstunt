@@ -76,7 +76,7 @@ impl Config {
 
         output.push_str("[embeddings]\n");
         if let Some(emb) = detected_embeddings {
-            output.push_str(&format!("enabled = true\n"));
+            output.push_str("enabled = true\n");
             output.push_str(&format!("provider = \"{}\"\n", emb.provider));
             output.push_str(&format!("endpoint = \"{}\"\n", emb.endpoint));
             output.push_str(&format!("model = \"{}\"\n", emb.model));

@@ -1611,11 +1611,11 @@ void helper() {
         // Without the lang-kotlin feature, Language::Kotlin hits the _ => fallback
         // Without the lang-dart feature, Language::Dart hits the _ => fallback
         // We test whichever feature-gated language is NOT compiled in.
-        let registry = LanguageRegistry::new().unwrap();
+        let _registry = LanguageRegistry::new().unwrap();
 
         #[cfg(not(feature = "lang-swift"))]
         {
-            let result = registry.get_ts_language(Language::Swift);
+            let result = _registry.get_ts_language(Language::Swift);
             assert!(
                 result.is_err(),
                 "Swift should fail without lang-swift feature"
@@ -1624,7 +1624,7 @@ void helper() {
 
         #[cfg(not(feature = "lang-kotlin"))]
         {
-            let result = registry.get_ts_language(Language::Kotlin);
+            let result = _registry.get_ts_language(Language::Kotlin);
             assert!(
                 result.is_err(),
                 "Kotlin should fail without lang-kotlin feature"
@@ -1633,7 +1633,7 @@ void helper() {
 
         #[cfg(not(feature = "lang-dart"))]
         {
-            let result = registry.get_ts_language(Language::Dart);
+            let result = _registry.get_ts_language(Language::Dart);
             assert!(
                 result.is_err(),
                 "Dart should fail without lang-dart feature"

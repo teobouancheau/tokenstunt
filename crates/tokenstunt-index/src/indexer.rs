@@ -1380,7 +1380,7 @@ mod tests {
         std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o000)).unwrap();
 
         let stats = indexer
-            .reindex_files(dir.path(), &[target.clone()])
+            .reindex_files(dir.path(), std::slice::from_ref(&target))
             .unwrap();
 
         // Restore permissions for cleanup

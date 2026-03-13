@@ -188,7 +188,7 @@ fn split_identifier(input: &str) -> Vec<String> {
 
     // Split on dots, hyphens, colons, slashes
     let segments: Vec<&str> = input
-        .split(|c: char| matches!(c, '.' | '-' | ':' | '/'))
+        .split(['.', '-', ':', '/'])
         .filter(|s| !s.is_empty())
         .collect();
 
