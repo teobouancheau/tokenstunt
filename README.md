@@ -36,7 +36,21 @@ cargo build --release
 tokenstunt serve --root /path/to/your/project
 ```
 
+## CLI commands
+
+```bash
+tokenstunt index --root .    # Index a directory with progress bar
+tokenstunt status            # Show index health at a glance
+tokenstunt serve --root .    # Start MCP server (used by Claude Code plugin)
+```
+
+All CLI output uses colored, compact formatting with an orange accent palette. Indexing shows a live progress bar. Status and serve display structured summaries.
+
 ## Features
+
+### Native Claude Code output
+
+MCP tool responses use Unicode compact blocks instead of markdown — box-drawing characters, score bars (`▓░`), tree connectors (`├─ └─`), and aligned columns. Renders cleanly in Claude Code's terminal without formatting artifacts.
 
 ### Live reactivity
 
