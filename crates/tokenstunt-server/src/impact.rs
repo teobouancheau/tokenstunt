@@ -1,7 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 
 use anyhow::Result;
-use tokenstunt_store::Store;
+use tokenstunt_store::{CodeBlockKind, Store};
 
 use crate::render;
 
@@ -9,7 +9,7 @@ const MAX_DEPTH_CAP: u32 = 5;
 
 pub struct ImpactNode {
     pub name: String,
-    pub kind: String,
+    pub kind: CodeBlockKind,
     pub file_path: String,
     pub dep_kind: String,
     pub depth: u32,
@@ -64,7 +64,7 @@ pub fn walk_dependents(
 
             dependents.push(ImpactNode {
                 name: block.name.clone(),
-                kind: block.kind.to_string(),
+                kind: block.kind,
                 file_path,
                 dep_kind,
                 depth: depth + 1,
@@ -124,10 +124,10 @@ pub fn format_impact(result: &ImpactResult) -> String {
             .map(|n| render::TreeItem {
                 label: format!(
                     "{}  {:<24} {:<28} {}",
-                    render::kind_label_from_str(&n.kind),
+                    render::kind_label(&n.kind),
                     n.name,
                     n.file_path,
-                    capitalize(&n.dep_kind),
+                    render::capitalize(&n.dep_kind),
                 ),
             })
             .collect();
@@ -140,23 +140,13 @@ pub fn format_impact(result: &ImpactResult) -> String {
         let items: Vec<render::TreeItem> = result
             .affected_files
             .iter()
-            .map(|p| render::TreeItem {
-                label: p.clone(),
-            })
+            .map(|p| render::TreeItem { label: p.clone() })
             .collect();
         out.push('\n');
         out.push_str(&render::render_tree_with_trunk("Affected Files", &items));
     }
 
     out
-}
-
-fn capitalize(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
-    }
 }
 
 #[cfg(test)]
@@ -344,14 +334,14 @@ mod tests {
             dependents: vec![
                 ImpactNode {
                     name: "funcB".to_string(),
-                    kind: "function".to_string(),
+                    kind: CodeBlockKind::Function,
                     file_path: "src/core.ts".to_string(),
                     dep_kind: "call".to_string(),
                     depth: 1,
                 },
                 ImpactNode {
                     name: "funcC".to_string(),
-                    kind: "function".to_string(),
+                    kind: CodeBlockKind::Function,
                     file_path: "src/util.ts".to_string(),
                     dep_kind: "call".to_string(),
                     depth: 2,

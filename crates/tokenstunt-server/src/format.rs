@@ -2,26 +2,19 @@ use tokenstunt_store::CodeBlock;
 
 use crate::render;
 
-#[cfg(test)]
-fn format_block(block: &CodeBlock, score: Option<f64>) -> String {
+fn format_block_entry(block: &CodeBlock) -> (String, String, String) {
     let file_path = block.file_path.as_deref().unwrap_or("unknown");
     let language = block.language.as_deref().unwrap_or("text");
     let location = format!("{file_path}:{}-{}", block.start_line, block.end_line);
-
-    let mut out = format!(
-        "  {}  {:<24} {location}",
-        render::kind_label(&block.kind),
-        block.name,
-    );
-
-    if let Some(s) = score {
-        let bar = render::bar(s, 10);
-        out.push_str(&format!("    {bar} {s:.2}"));
-    }
-
-    out.push_str("\n\n");
-    out.push_str(&render::code_block(language, &block.content));
-    out
+    (
+        format!(
+            "  {}  {:<24} {location}",
+            render::kind_label(&block.kind),
+            block.name,
+        ),
+        language.to_string(),
+        block.content.clone(),
+    )
 }
 
 pub fn format_summary_row(block: &CodeBlock, score: Option<f64>) -> String {
@@ -42,15 +35,21 @@ pub fn format_summary_row(block: &CodeBlock, score: Option<f64>) -> String {
     out
 }
 
-pub fn format_blocks(blocks: &[(CodeBlock, Option<f64>)]) -> String {
+pub fn format_blocks(query: &str, blocks: &[(CodeBlock, Option<f64>)]) -> String {
     if blocks.is_empty() {
         return String::new();
     }
 
-    let query_hint = "";
     let count = blocks.len();
-    let mut out = render::header("Search", query_hint);
-    out.push_str(&format!("                                   {count} results\n\n"));
+    let hint = if query.is_empty() {
+        String::new()
+    } else {
+        format!("\"{}\"", query)
+    };
+    let mut out = render::header("Search", &hint);
+    out.push_str(&format!(
+        "                                   {count} results\n\n"
+    ));
 
     for (block, score) in blocks {
         out.push_str(&format_summary_row(block, *score));
@@ -62,16 +61,9 @@ pub fn format_blocks(blocks: &[(CodeBlock, Option<f64>)]) -> String {
     out.push('\n');
 
     for (block, _score) in blocks {
-        let file_path = block.file_path.as_deref().unwrap_or("unknown");
-        let language = block.language.as_deref().unwrap_or("text");
-        let location = format!("{file_path}:{}-{}", block.start_line, block.end_line);
-
-        out.push_str(&format!(
-            "\n  {}  {:<24} {location}\n\n",
-            render::kind_label(&block.kind),
-            block.name,
-        ));
-        out.push_str(&render::code_block(language, &block.content));
+        let (header_line, language, content) = format_block_entry(block);
+        out.push_str(&format!("\n{header_line}\n\n"));
+        out.push_str(&render::code_block(&language, &content));
         out.push('\n');
     }
 
@@ -88,16 +80,9 @@ pub fn format_symbol_blocks(blocks: &[(CodeBlock, Option<f64>)]) -> String {
         if i > 0 {
             out.push('\n');
         }
-        let file_path = block.file_path.as_deref().unwrap_or("unknown");
-        let language = block.language.as_deref().unwrap_or("text");
-        let location = format!("{file_path}:{}-{}", block.start_line, block.end_line);
-
-        out.push_str(&format!(
-            "  {}  {:<24} {location}\n\n",
-            render::kind_label(&block.kind),
-            block.name,
-        ));
-        out.push_str(&render::code_block(language, &block.content));
+        let (header_line, language, content) = format_block_entry(block);
+        out.push_str(&format!("{header_line}\n\n"));
+        out.push_str(&render::code_block(&language, &content));
         out.push('\n');
     }
 
@@ -126,23 +111,22 @@ mod tests {
     }
 
     #[test]
-    fn test_format_block() {
+    fn test_format_summary_row() {
         let block = sample_block("greet");
-        let output = format_block(&block, Some(0.95));
+        let output = format_summary_row(&block, Some(0.95));
 
         assert!(output.contains("greet"));
         assert!(output.contains("Function"));
         assert!(output.contains("src/main.ts"));
         assert!(output.contains("1-5"));
         assert!(output.contains("0.95"));
-        assert!(output.contains("```typescript"));
 
-        let output_no_score = format_block(&block, None);
+        let output_no_score = format_summary_row(&block, None);
         assert!(!output_no_score.contains("0.95"));
     }
 
     #[test]
-    fn test_format_block_missing_fields() {
+    fn test_format_block_entry_missing_fields() {
         let block = CodeBlock {
             id: 1,
             file_id: 1,
@@ -156,13 +140,13 @@ mod tests {
             file_path: None,
             language: None,
         };
-        let output = format_block(&block, None);
+        let (header_line, language, _content) = format_block_entry(&block);
         assert!(
-            output.contains("unknown"),
+            header_line.contains("unknown"),
             "missing file_path should show 'unknown'"
         );
-        assert!(
-            output.contains("```text"),
+        assert_eq!(
+            language, "text",
             "missing language should fallback to 'text'"
         );
     }
@@ -173,15 +157,16 @@ mod tests {
             (sample_block("a"), Some(0.9)),
             (sample_block("b"), Some(0.8)),
         ];
-        let output = format_blocks(&blocks);
+        let output = format_blocks("authenticate", &blocks);
         assert!(output.contains("\u{2500}"));
         assert!(output.contains("2 results"));
+        assert!(output.contains("\"authenticate\""));
     }
 
     #[test]
     fn test_format_blocks_has_summary_and_code() {
         let blocks = vec![(sample_block("greet"), Some(0.95))];
-        let output = format_blocks(&blocks);
+        let output = format_blocks("greet", &blocks);
         assert!(output.contains("\u{25C6} Search"));
         assert!(output.contains("```typescript"));
     }

@@ -107,6 +107,8 @@ impl Indexer {
                 }
 
                 if !registry.is_supported(entry.language) {
+                    progress.on_file_skipped(&rel_path);
+                    stats.skipped += 1;
                     continue;
                 }
 
@@ -355,11 +357,8 @@ impl Indexer {
                     .to_string();
 
                 if !path.exists() {
-                    let current_paths: Vec<String> = vec![];
-                    // File was deleted — remove it from the DB
                     self.store
-                        .delete_stale_files_with_conn(conn, repo_id, &current_paths)
-                        .ok();
+                        .delete_file_by_path_with_conn(conn, repo_id, &rel_path)?;
                     stats.deleted += 1;
 
                     self.invalidate_cache_for_path(conn, &rel_path)?;

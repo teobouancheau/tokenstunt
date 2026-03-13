@@ -10,11 +10,6 @@ pub fn header(title: &str, subtitle: &str) -> String {
     }
 }
 
-#[allow(dead_code)]
-pub fn subheader(title: &str) -> String {
-    format!("\u{25C7} {title}")
-}
-
 pub fn separator() -> String {
     "\u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500} \u{2500}".to_string()
 }
@@ -44,23 +39,12 @@ pub fn kind_label(kind: &CodeBlockKind) -> &'static str {
     }
 }
 
-pub fn kind_label_from_str(kind: &str) -> String {
-    let label = match kind {
-        "function" => "Function",
-        "method" => "Method",
-        "class" => "Class",
-        "struct" => "Struct",
-        "enum" => "Enum",
-        "interface" => "Interface",
-        "type_alias" => "Type",
-        "constant" => "Constant",
-        "variable" => "Variable",
-        "module" => "Module",
-        "trait" => "Trait",
-        "impl" => "Impl",
-        other => return format!("{other:<9}"),
-    };
-    format!("{label:<9}")
+pub fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+    }
 }
 
 pub fn code_block(language: &str, content: &str) -> String {
@@ -82,11 +66,6 @@ mod tests {
     fn test_header() {
         assert_eq!(header("Search", "\"auth\""), "\u{25C6} Search  \"auth\"");
         assert_eq!(header("Setup", ""), "\u{25C6} Setup");
-    }
-
-    #[test]
-    fn test_subheader() {
-        assert!(subheader("Languages").contains('\u{25C7}'));
     }
 
     #[test]

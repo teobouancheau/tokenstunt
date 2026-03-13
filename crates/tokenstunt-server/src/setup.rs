@@ -16,18 +16,28 @@ pub fn build_setup_report(store: &Store, root: &Path, has_embeddings: bool) -> R
 
     out.push_str(&render::kv("Root", &root.display().to_string(), kw));
     out.push('\n');
-    out.push_str(&render::kv("Database", &store.db_path().display().to_string(), kw));
+    out.push_str(&render::kv(
+        "Database",
+        &store.db_path().display().to_string(),
+        kw,
+    ));
     out.push('\n');
     out.push_str(&render::kv("Files", &file_count.to_string(), kw));
     out.push('\n');
     out.push_str(&render::kv("Blocks", &block_count.to_string(), kw));
     out.push('\n');
-    out.push_str(&render::kv("Deps", &format!("{dep_total} ({dep_resolved} resolved)"), kw));
+    out.push_str(&render::kv(
+        "Deps",
+        &format!("{dep_total} ({dep_resolved} resolved)"),
+        kw,
+    ));
     out.push('\n');
 
     if file_count == 0 {
         out.push('\n');
-        out.push_str(&render::notice("No files indexed. Run `tokenstunt index` or restart the server."));
+        out.push_str(&render::notice(
+            "No files indexed. Run `tokenstunt index` or restart the server.",
+        ));
         out.push('\n');
     }
 
@@ -46,12 +56,6 @@ pub fn build_setup_report(store: &Store, root: &Path, has_embeddings: bool) -> R
     out.push('\n');
     if has_embeddings {
         let emb_count = store.embedding_count()?;
-        let coverage = if block_count > 0 {
-            (emb_count as f64 / block_count as f64 * 100.0) as u32
-        } else {
-            0
-        };
-        let status_label = format!("Configured");
         let items = vec![render::TreeItem {
             label: format!(
                 "Coverage  {}",
@@ -60,11 +64,10 @@ pub fn build_setup_report(store: &Store, root: &Path, has_embeddings: bool) -> R
         }];
         out.push_str(&format!(
             "  \u{25C7} Embeddings{:>width$}\n  \u{2502}\n",
-            status_label,
+            "Configured",
             width = 24
         ));
         out.push_str(&render::render_list(&items));
-        let _ = coverage;
     } else {
         out.push_str("  \u{25C7} Embeddings              Not configured\n");
         out.push('\n');

@@ -43,7 +43,6 @@ Project structure at a glance: files, languages, modules, public API, entry poin
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `scope` | no | Restrict to a directory path (e.g. `src/`) |
-| `depth` | no | Directory depth for module tree, default 1 |
 
 ### `ts_setup`
 
