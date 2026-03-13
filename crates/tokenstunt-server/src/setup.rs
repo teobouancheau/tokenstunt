@@ -10,26 +10,23 @@ pub fn build_setup_report(store: &Store, root: &Path, has_embeddings: bool) -> R
     let block_count = store.block_count()?;
     let (dep_total, dep_resolved) = store.dependency_count()?;
 
-    let kw = 10;
-    let mut out = render::header("Setup", "TokenStunt");
+    let mut out = render::header("Setup", "Token Stunt");
     out.push_str("\n\n");
 
-    out.push_str(&render::kv("Root", &root.display().to_string(), kw));
+    out.push_str(&render::kv_line("Root", &root.display().to_string()));
     out.push('\n');
-    out.push_str(&render::kv(
+    out.push_str(&render::kv_line(
         "Database",
         &store.db_path().display().to_string(),
-        kw,
     ));
     out.push('\n');
-    out.push_str(&render::kv("Files", &file_count.to_string(), kw));
+    out.push_str(&render::kv_line("Files", &file_count.to_string()));
     out.push('\n');
-    out.push_str(&render::kv("Blocks", &block_count.to_string(), kw));
+    out.push_str(&render::kv_line("Code Blocks", &block_count.to_string()));
     out.push('\n');
-    out.push_str(&render::kv(
-        "Deps",
+    out.push_str(&render::kv_line(
+        "Dependencies",
         &format!("{dep_total} ({dep_resolved} resolved)"),
-        kw,
     ));
     out.push('\n');
 
@@ -62,14 +59,10 @@ pub fn build_setup_report(store: &Store, root: &Path, has_embeddings: bool) -> R
                 render::bar_with_label(emb_count as u64, block_count as u64, 20)
             ),
         }];
-        out.push_str(&format!(
-            "  \u{25C7} Embeddings{:>width$}\n  \u{2502}\n",
-            "Configured",
-            width = 24
-        ));
+        out.push_str("  \u{25C6} Embeddings  Configured\n  \u{2502}\n");
         out.push_str(&render::render_list(&items));
     } else {
-        out.push_str("  \u{25C7} Embeddings              Not configured\n");
+        out.push_str("  \u{25C6} Embeddings  Not configured\n");
         out.push('\n');
         out.push_str("  To enable semantic search, create a config at\n  `~/.cache/tokenstunt/<project>/config.toml`:\n\n");
         out.push_str("  ```toml\n  [embeddings]\n  enabled = true\n  provider = \"ollama\"\n  model = \"nomic-embed-text\"\n  endpoint = \"http://localhost:11434\"\n  dimensions = 768\n  ```\n");

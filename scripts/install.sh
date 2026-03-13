@@ -42,19 +42,24 @@ get_target() {
 main() {
   local version target url archive
 
-  # Skip if binary already exists and is executable
-  if [[ -x "${BIN_DIR}/${BINARY_NAME}" ]]; then
-    return 0
-  fi
-
-  echo "Installing TokenStunt..."
-
   version="$(get_latest_version)"
   if [[ -z "${version}" ]]; then
     echo "Failed to fetch latest release version." >&2
     echo "Falling back to cargo install..." >&2
     cargo_fallback
     return
+  fi
+
+  if [[ -x "${BIN_DIR}/${BINARY_NAME}" ]]; then
+    local installed
+    installed="$("${BIN_DIR}/${BINARY_NAME}" --version 2>/dev/null | awk '{print $2}')"
+    if [[ "${installed}" == "${version#v}" ]]; then
+      return 0
+    fi
+    echo "Updating Token Stunt ${installed} → ${version#v}..."
+    rm -f "${BIN_DIR}/${BINARY_NAME}"
+  else
+    echo "Installing Token Stunt..."
   fi
 
   target="$(get_target)"
@@ -66,7 +71,7 @@ main() {
 
   if curl -fsSL "${url}" | tar xz -C "${BIN_DIR}"; then
     chmod +x "${BIN_DIR}/${BINARY_NAME}"
-    echo "Installed ${BINARY_NAME} ${version} to ${BIN_DIR}/${BINARY_NAME}"
+    echo "Installed ${BINARY_NAME} ${version#v} to ${BIN_DIR}/${BINARY_NAME}"
   else
     echo "Download failed. Falling back to cargo install..." >&2
     cargo_fallback

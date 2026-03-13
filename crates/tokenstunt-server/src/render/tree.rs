@@ -17,7 +17,7 @@ pub fn render_list(items: &[TreeItem]) -> String {
 }
 
 pub fn render_tree_with_trunk(title: &str, items: &[TreeItem]) -> String {
-    let mut out = format!("  \u{25C7} {title}\n  \u{2502}\n");
+    let mut out = format!("  \u{25C6} {title}\n  \u{2502}\n");
     out.push_str(&render_list(items));
     out
 }
@@ -61,7 +61,7 @@ mod tests {
             label: "item".to_string(),
         }];
         let out = render_tree_with_trunk("Section", &items);
-        assert!(out.contains("\u{25C7} Section"));
+        assert!(out.contains("\u{25C6} Section"));
         assert!(out.contains("\u{2502}"));
         assert!(out.contains("item"));
     }

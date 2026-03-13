@@ -5,6 +5,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use tokenstunt_index::IndexProgress;
 
 const ORANGE_256: u8 = 173;
+const LABEL_WIDTH: usize = 12;
 
 fn accent() -> Style {
     Style::new().color256(ORANGE_256)
@@ -86,7 +87,7 @@ pub fn print_index_summary(files: u64, blocks: u64, skipped: u64, deleted_files:
     let b = bold();
 
     eprintln!(
-        "  {}  {} files, {} code blocks",
+        "  {:>LABEL_WIDTH$}  {} files, {} code blocks",
         a.apply_to("Indexed"),
         b.apply_to(format_number(files)),
         b.apply_to(format_number(blocks)),
@@ -94,7 +95,7 @@ pub fn print_index_summary(files: u64, blocks: u64, skipped: u64, deleted_files:
 
     if skipped > 0 {
         eprintln!(
-            "  {}  {} unchanged",
+            "  {:>LABEL_WIDTH$}  {} unchanged",
             dim().apply_to("Skipped"),
             dim().apply_to(format_number(skipped)),
         );
@@ -103,7 +104,7 @@ pub fn print_index_summary(files: u64, blocks: u64, skipped: u64, deleted_files:
     if deleted_files > 0 {
         let warn = Style::new().yellow();
         eprintln!(
-            "  {}  {} stale files removed",
+            "  {:>LABEL_WIDTH$}  {} stale files removed",
             warn.apply_to("Cleaned"),
             warn.apply_to(format_number(deleted_files)),
         );
@@ -112,8 +113,8 @@ pub fn print_index_summary(files: u64, blocks: u64, skipped: u64, deleted_files:
     if errors > 0 {
         let err = Style::new().red();
         eprintln!(
-            "  {}  {} files failed",
-            err.apply_to("Errors "),
+            "  {:>LABEL_WIDTH$}  {} files failed",
+            err.apply_to("Errors"),
             err.apply_to(format_number(errors)),
         );
     }
@@ -128,8 +129,8 @@ pub fn print_embed_summary(emb_count: u64, block_count: u64) {
         0
     };
     eprintln!(
-        "  {}  {}/{} vectors ({}%)",
-        a.apply_to("Embeds "),
+        "  {:>LABEL_WIDTH$}  {}/{} vectors ({}%)",
+        a.apply_to("Embeddings"),
         b.apply_to(format_number(emb_count)),
         format_number(block_count),
         pct,
@@ -147,53 +148,63 @@ pub fn print_status(db_path: &std::path::Path, files: u64, blocks: u64) {
         .and_then(|n| n.to_str())
         .unwrap_or("unknown");
 
-    eprintln!("  {}  {}", a.apply_to("Index "), b.apply_to(project_name),);
     eprintln!(
-        "  {}  {}",
-        d.apply_to("Path  "),
+        "  {:>LABEL_WIDTH$}  {}",
+        a.apply_to("Index"),
+        b.apply_to(project_name),
+    );
+    eprintln!(
+        "  {:>LABEL_WIDTH$}  {}",
+        d.apply_to("Path"),
         d.apply_to(db_path.display()),
     );
     eprintln!(
-        "  {}  {} indexed",
-        a.apply_to("Files "),
+        "  {:>LABEL_WIDTH$}  {} indexed",
+        a.apply_to("Files"),
         b.apply_to(format_number(files)),
     );
     eprintln!(
-        "  {}  {} code blocks",
-        a.apply_to("Blocks"),
+        "  {:>LABEL_WIDTH$}  {}",
+        a.apply_to("Code Blocks"),
         b.apply_to(format_number(blocks)),
     );
 }
 
 pub fn print_serve_banner(root: &std::path::Path, files: u64, blocks: u64, watcher_active: bool) {
     let a = accent();
+    let b = bold();
     let d = dim();
     let g = Style::new().green();
 
     eprintln!(
         "  {} v{}",
-        a.apply_to("TokenStunt").bold(),
+        a.apply_to("Token Stunt").bold(),
         env!("CARGO_PKG_VERSION"),
     );
     eprintln!(
-        "  {}  {}",
-        a.apply_to("Root   "),
+        "  {:>LABEL_WIDTH$}  {}",
+        a.apply_to("Root"),
         d.apply_to(root.display()),
     );
     eprintln!(
-        "  {}  {} files, {} blocks",
-        a.apply_to("Index  "),
-        files,
-        blocks,
+        "  {:>LABEL_WIDTH$}  {} files, {} code blocks",
+        a.apply_to("Index"),
+        b.apply_to(format_number(files)),
+        b.apply_to(format_number(blocks)),
     );
     if watcher_active {
-        eprintln!("  {}  {}", a.apply_to("Watcher"), g.apply_to("active"));
+        eprintln!(
+            "  {:>LABEL_WIDTH$}  {}",
+            a.apply_to("Watcher"),
+            g.apply_to("active"),
+        );
     }
     eprintln!(
-        "  {}  {}",
-        a.apply_to("MCP    "),
-        g.apply_to("Ready on stdio")
+        "  {:>LABEL_WIDTH$}  {}",
+        a.apply_to("MCP"),
+        g.apply_to("Ready on stdio"),
     );
+    eprintln!();
 }
 
 fn truncate_path(path: &str, max_len: usize) -> String {

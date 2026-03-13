@@ -64,6 +64,30 @@ fn resolve_db(db: Option<PathBuf>, root: &std::path::Path) -> Result<PathBuf> {
     }
 }
 
+struct CommandContext {
+    root: PathBuf,
+    store: tokenstunt_store::Store,
+    embedder: Option<Arc<dyn EmbeddingProvider>>,
+}
+
+fn init_context(root: Option<PathBuf>, db: Option<PathBuf>) -> Result<CommandContext> {
+    let root = resolve_root(root)?;
+    let cfg = config::Config::load(&root)?;
+    let embedder = load_embedder(&cfg)?;
+    let db_path = resolve_db(db, &root)?;
+
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let store = tokenstunt_store::Store::open(&db_path)?;
+    Ok(CommandContext {
+        root,
+        store,
+        embedder,
+    })
+}
+
 fn init_logging(default_level: &str) {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_level));
@@ -107,28 +131,21 @@ async fn main() -> Result<()> {
         Command::Serve { root, db } => {
             init_logging("tokenstunt=warn");
 
-            let root = resolve_root(root)?;
-            let cfg = config::Config::load(&root)?;
-            let embedder = load_embedder(&cfg)?;
-            let db_path = resolve_db(db, &root)?;
-
-            if let Some(parent) = db_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-
-            let store = tokenstunt_store::Store::open(&db_path)?;
-            let indexer = Arc::new(tokenstunt_index::Indexer::new(store, embedder)?);
+            let ctx = init_context(root, db)?;
+            let indexer = Arc::new(tokenstunt_index::Indexer::new(ctx.store, ctx.embedder)?);
 
             let progress = output::IndicatifProgress::new();
-            let stats = indexer.index_directory(&root, &progress)?;
+            let stats = indexer.index_directory(&ctx.root, &progress)?;
+            indexer.await_embeddings().await;
 
-            let root_str = root.to_str().context("non-UTF-8 path")?;
-            let repo_name = root
+            let root_str = ctx.root.to_str().context("non-UTF-8 path")?;
+            let repo_name = ctx
+                .root
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("unknown");
             let repo_id = indexer.store().ensure_repo(root_str, repo_name)?;
-            let reconcile_stats = indexer.reconcile(&root, repo_id)?;
+            let reconcile_stats = indexer.reconcile(&ctx.root, repo_id)?;
             info!(
                 updated = reconcile_stats.updated,
                 unchanged = reconcile_stats.unchanged,
@@ -137,15 +154,15 @@ async fn main() -> Result<()> {
             );
 
             let _watcher =
-                tokenstunt_index::FileWatcher::start(Arc::clone(&indexer), root.clone())?;
+                tokenstunt_index::FileWatcher::start(Arc::clone(&indexer), ctx.root.clone())?;
 
             let has_embeddings = indexer.embedder().is_some();
 
-            output::print_serve_banner(&root, stats.files, stats.blocks, true);
+            output::print_serve_banner(&ctx.root, stats.files, stats.blocks, true);
 
             let server = tokenstunt_server::TokenStuntServer::new(
                 Arc::clone(&indexer),
-                root,
+                ctx.root,
                 has_embeddings,
             );
 
@@ -163,21 +180,12 @@ async fn main() -> Result<()> {
         Command::Index { root, db } => {
             init_logging("tokenstunt=info");
 
-            let root = resolve_root(root)?;
-            let cfg = config::Config::load(&root)?;
-            let embedder = load_embedder(&cfg)?;
-            let has_embeddings = embedder.is_some();
-            let db_path = resolve_db(db, &root)?;
-
-            if let Some(parent) = db_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-
-            let store = tokenstunt_store::Store::open(&db_path)?;
-            let indexer = tokenstunt_index::Indexer::new(store, embedder)?;
+            let ctx = init_context(root, db)?;
+            let has_embeddings = ctx.embedder.is_some();
+            let indexer = tokenstunt_index::Indexer::new(ctx.store, ctx.embedder)?;
 
             let progress = output::IndicatifProgress::new();
-            let stats = indexer.index_directory(&root, &progress)?;
+            let stats = indexer.index_directory(&ctx.root, &progress)?;
             indexer.await_embeddings().await;
 
             output::print_index_summary(
