@@ -1,19 +1,62 @@
 # TokenStunt
 
-AST-level code intelligence MCP server for Claude Code. Indexes your codebase into searchable symbols, dependency graphs, and project overviews -- all served over the Model Context Protocol.
+AST-level code intelligence MCP server for Claude Code. Indexes your codebase into searchable symbols, dependency graphs, and project overviews, all served over the Model Context Protocol.
 
 ## What it does
 
-TokenStunt parses your source code with tree-sitter, extracts every function, class, interface, trait, enum, and constant, stores them in a SQLite FTS5 index, and serves them through 6 MCP tools:
+TokenStunt parses your source code with tree-sitter, extracts every function, class, interface, trait, enum, and constant, stores them in a SQLite FTS5 index, and serves them through 6 MCP tools.
 
-| Tool | Description |
-|------|-------------|
-| `ts_search` | Code search across indexed symbols. Returns ranked code blocks, not full files. |
-| `ts_symbol` | Exact symbol lookup by name. Returns the full definition. |
-| `ts_context` | Symbol definition + dependency graph. Shows what a symbol calls and what calls it. |
-| `ts_overview` | Project structure: module tree, language breakdown, public API surface, entry points. |
-| `ts_setup` | Project diagnostics: index health, languages, embeddings status. |
-| `ts_impact` | Blast radius analysis: dependents and affected files before refactoring. |
+### `ts_search`
+
+Semantic code search. Returns ranked code blocks with score bars, not full files.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `query` | yes | Search query (natural language or keyword) |
+| `scope` | no | Scope to a directory path |
+| `language` | no | Filter by language (e.g. `typescript`, `python`) |
+| `symbol_kind` | no | Filter by symbol kind (`function`, `class`, `interface`, etc.) |
+| `limit` | no | Max results (default: 10) |
+
+### `ts_symbol`
+
+Exact symbol lookup by name. Returns the full definition with file path and line numbers.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `name` | yes | Exact symbol name |
+| `kind` | no | Filter by symbol kind |
+
+### `ts_context`
+
+Symbol definition + dependency graph. Shows what a symbol calls and what calls it.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `symbol` | yes | Symbol name |
+| `direction` | no | `dependencies`, `dependents`, or `both` (default: `both`) |
+
+### `ts_overview`
+
+Project structure: module tree, language breakdown, public API surface, entry points.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `scope` | no | Scope to a directory path (e.g. `src/`) |
+| `depth` | no | Directory depth for module tree (default: 1) |
+
+### `ts_setup`
+
+Project diagnostics: index health, languages, embeddings status and configuration guidance. No parameters.
+
+### `ts_impact`
+
+Blast radius analysis: all symbols and files affected by changing a given symbol.
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `symbol` | yes | Symbol name to analyze |
+| `max_depth` | no | Max traversal depth (default: 3, max: 5) |
 
 ## Supported languages
 
