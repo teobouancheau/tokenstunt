@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
-use tokenstunt_index::IndexProgress;
+use tokenstunt_index::{EmbeddingProgress, IndexProgress};
 
 const ORANGE_256: u8 = 173;
 const LABEL_WIDTH: usize = 12;
@@ -74,6 +74,52 @@ impl IndexProgress for IndicatifProgress {
     }
 
     fn on_complete(&self, _files: u64, _blocks: u64, _skipped: u64, _errors: u64) {
+        if let Ok(lock) = self.bar.lock()
+            && let Some(pb) = lock.as_ref()
+        {
+            pb.finish_and_clear();
+        }
+    }
+}
+
+pub struct IndicatifEmbeddingProgress {
+    bar: Mutex<Option<ProgressBar>>,
+}
+
+impl IndicatifEmbeddingProgress {
+    pub fn new() -> Self {
+        Self {
+            bar: Mutex::new(None),
+        }
+    }
+}
+
+impl EmbeddingProgress for IndicatifEmbeddingProgress {
+    fn on_start(&self, total_blocks: u64) {
+        let pb = ProgressBar::new(total_blocks);
+        pb.set_style(
+            ProgressStyle::with_template(&format!(
+                " {}  [{{bar:24.{}}}]  {{pos}}/{{len}} blocks",
+                accent().apply_to("Embedding"),
+                ORANGE_256,
+            ))
+            .unwrap()
+            .progress_chars("##-"),
+        );
+        if let Ok(mut lock) = self.bar.lock() {
+            *lock = Some(pb);
+        }
+    }
+
+    fn on_batch_complete(&self, batch_size: u64) {
+        if let Ok(lock) = self.bar.lock()
+            && let Some(pb) = lock.as_ref()
+        {
+            pb.inc(batch_size);
+        }
+    }
+
+    fn on_complete(&self, _total: u64) {
         if let Ok(lock) = self.bar.lock()
             && let Some(pb) = lock.as_ref()
         {

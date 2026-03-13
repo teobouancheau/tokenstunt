@@ -44,6 +44,16 @@ enum Command {
         #[arg(short, long)]
         db: Option<PathBuf>,
     },
+    /// Generate embeddings for indexed code blocks
+    Embed {
+        /// Root directory (defaults to current directory)
+        #[arg(short, long)]
+        root: Option<PathBuf>,
+
+        /// Path to the database file
+        #[arg(short, long)]
+        db: Option<PathBuf>,
+    },
     /// Show index status
     Status {
         /// Path to the database file
@@ -132,11 +142,20 @@ async fn main() -> Result<()> {
             init_logging("tokenstunt=warn");
 
             let ctx = init_context(root, db)?;
-            let indexer = Arc::new(tokenstunt_index::Indexer::new(ctx.store, ctx.embedder)?);
+            let mut indexer = tokenstunt_index::Indexer::new(ctx.store, ctx.embedder)?;
+            if indexer.embedder().is_some() {
+                indexer.set_embedding_progress(Arc::new(output::IndicatifEmbeddingProgress::new()));
+            }
+            let indexer = Arc::new(indexer);
 
             let progress = output::IndicatifProgress::new();
             let stats = indexer.index_directory(&ctx.root, &progress)?;
             indexer.await_embeddings().await;
+
+            let backfilled = indexer.backfill_embeddings()?;
+            if backfilled > 0 {
+                indexer.await_embeddings().await;
+            }
 
             let root_str = ctx.root.to_str().context("non-UTF-8 path")?;
             let repo_name = ctx
@@ -182,11 +201,19 @@ async fn main() -> Result<()> {
 
             let ctx = init_context(root, db)?;
             let has_embeddings = ctx.embedder.is_some();
-            let indexer = tokenstunt_index::Indexer::new(ctx.store, ctx.embedder)?;
+            let mut indexer = tokenstunt_index::Indexer::new(ctx.store, ctx.embedder)?;
+            if has_embeddings {
+                indexer.set_embedding_progress(Arc::new(output::IndicatifEmbeddingProgress::new()));
+            }
 
             let progress = output::IndicatifProgress::new();
             let stats = indexer.index_directory(&ctx.root, &progress)?;
             indexer.await_embeddings().await;
+
+            let backfilled = indexer.backfill_embeddings()?;
+            if backfilled > 0 {
+                indexer.await_embeddings().await;
+            }
 
             output::print_index_summary(
                 stats.files,
@@ -201,6 +228,41 @@ async fn main() -> Result<()> {
                 let block_count = indexer.store().block_count()?.max(0) as u64;
                 output::print_embed_summary(emb_count, block_count);
             }
+
+            Ok(())
+        }
+
+        Command::Embed { root, db } => {
+            init_logging("tokenstunt=info");
+
+            let ctx = init_context(root, db)?;
+
+            if ctx.embedder.is_none() {
+                eprintln!("No embedding provider configured.");
+                eprintln!();
+                eprintln!("Add an [embeddings] section to your config.toml:");
+                eprintln!("  ~/.cache/tokenstunt/<project>/config.toml");
+                eprintln!();
+                eprintln!("  [embeddings]");
+                eprintln!("  enabled = true");
+                eprintln!("  provider = \"ollama\"");
+                eprintln!("  endpoint = \"http://localhost:11434\"");
+                eprintln!("  model = \"nomic-embed-text\"");
+                eprintln!("  dimensions = 768");
+                return Ok(());
+            }
+
+            let mut indexer = tokenstunt_index::Indexer::new(ctx.store, ctx.embedder)?;
+            indexer.set_embedding_progress(Arc::new(output::IndicatifEmbeddingProgress::new()));
+            let backfilled = indexer.backfill_embeddings()?;
+
+            if backfilled > 0 {
+                indexer.await_embeddings().await;
+            }
+
+            let emb_count = indexer.store().embedding_count()?.max(0) as u64;
+            let block_count = indexer.store().block_count()?.max(0) as u64;
+            output::print_embed_summary(emb_count, block_count);
 
             Ok(())
         }

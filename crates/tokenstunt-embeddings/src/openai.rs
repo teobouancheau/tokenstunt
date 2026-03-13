@@ -88,6 +88,10 @@ impl EmbeddingProvider for OpenAiCompatProvider {
         self.dimensions
     }
 
+    fn model_name(&self) -> &str {
+        &self.model
+    }
+
     async fn health_check(&self) -> Result<()> {
         let base = self
             .endpoint

@@ -175,7 +175,8 @@ impl<'a> SearchEngine<'a> {
 fn embed_sync(embedder: &dyn EmbeddingProvider, text: &str) -> Result<Vec<f32>> {
     let handle = tokio::runtime::Handle::current();
     let texts = vec![text.to_string()];
-    let mut results = handle.block_on(embedder.embed_batch(&texts))?;
+    let mut results =
+        tokio::task::block_in_place(|| handle.block_on(embedder.embed_batch(&texts)))?;
     results
         .pop()
         .ok_or_else(|| anyhow::anyhow!("embedding returned no results"))

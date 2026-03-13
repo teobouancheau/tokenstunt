@@ -11,7 +11,7 @@ use tokenstunt_embeddings::EmbeddingProvider;
 use tokenstunt_parser::{Language, LanguageRegistry, ParsedSymbol, SymbolExtractor};
 use tokenstunt_store::{CodeBlockKind, Connection, Store};
 
-use crate::progress::IndexProgress;
+use crate::progress::{EmbeddingProgress, IndexProgress};
 use crate::walker;
 
 pub struct Indexer {
@@ -19,6 +19,7 @@ pub struct Indexer {
     extractor: SymbolExtractor,
     embedder: Option<Arc<dyn EmbeddingProvider>>,
     embedding_handles: Mutex<Vec<JoinHandle<()>>>,
+    embedding_progress: Option<Arc<dyn EmbeddingProgress>>,
 }
 
 impl Indexer {
@@ -30,6 +31,7 @@ impl Indexer {
             extractor,
             embedder,
             embedding_handles: Mutex::new(Vec::new()),
+            embedding_progress: None,
         })
     }
 
@@ -41,19 +43,45 @@ impl Indexer {
         self.embedder.as_ref()
     }
 
+    pub fn set_embedding_progress(&mut self, progress: Arc<dyn EmbeddingProgress>) {
+        self.embedding_progress = Some(progress);
+    }
+
     fn spawn_embeddings_if_needed(&self, embedding_work: Vec<(i64, String)>) {
         if !embedding_work.is_empty()
             && let Some(embedder) = &self.embedder
         {
+            if let Some(ref p) = self.embedding_progress {
+                p.on_start(embedding_work.len() as u64);
+            }
+            let model_name = embedder.model_name().to_string();
             let handle = spawn_embedding_task(
                 self.store.db_path().to_path_buf(),
                 Arc::clone(embedder),
                 embedding_work,
+                model_name,
+                self.embedding_progress.clone(),
             );
             if let Ok(mut handles) = self.embedding_handles.lock() {
                 handles.push(handle);
             }
         }
+    }
+
+    pub fn backfill_embeddings(&self) -> Result<u64> {
+        let Some(embedder) = &self.embedder else {
+            return Ok(0);
+        };
+
+        let model = embedder.model_name();
+        let work = self.store.get_blocks_without_embeddings(Some(model))?;
+        let count = work.len() as u64;
+
+        if count > 0 {
+            self.spawn_embeddings_if_needed(work);
+        }
+
+        Ok(count)
     }
 
     pub async fn await_embeddings(&self) {
@@ -557,7 +585,10 @@ fn spawn_embedding_task(
     db_path: PathBuf,
     embedder: Arc<dyn EmbeddingProvider>,
     work: Vec<(i64, String)>,
+    model_name: String,
+    progress: Option<Arc<dyn EmbeddingProgress>>,
 ) -> tokio::task::JoinHandle<()> {
+    let total = work.len() as u64;
     tokio::spawn(async move {
         let store = match tokenstunt_store::Store::open(&db_path) {
             Ok(s) => s,
@@ -578,9 +609,12 @@ fn spawn_embedding_task(
                 Ok(vectors) => {
                     for (i, vector) in vectors.iter().enumerate() {
                         let (block_id, _) = &work[chunk_start + i];
-                        if let Err(e) = store.insert_embedding(*block_id, vector, "default") {
+                        if let Err(e) = store.insert_embedding(*block_id, vector, &model_name) {
                             warn!(block_id, error = %e, "failed to store embedding");
                         }
+                    }
+                    if let Some(ref p) = progress {
+                        p.on_batch_complete(vectors.len() as u64);
                     }
                     info!(count = vectors.len(), "embedded batch");
                 }
@@ -590,7 +624,10 @@ fn spawn_embedding_task(
             }
         }
 
-        info!(total = work.len(), "background embedding complete");
+        if let Some(ref p) = progress {
+            p.on_complete(total);
+        }
+        info!(total, "background embedding complete");
     })
 }
 
@@ -808,6 +845,35 @@ mod tests {
             .unwrap();
         assert_eq!(stats.reindexed, 0);
         assert_eq!(stats.unchanged, 1);
+    }
+
+    #[test]
+    fn test_backfill_embeddings_without_embedder() {
+        let dir = tempfile::tempdir().unwrap();
+        write_test_files(dir.path());
+
+        let store = Store::open_in_memory().unwrap();
+        let indexer = Indexer::new(store, None).unwrap();
+        indexer.index_directory(dir.path(), &NopProgress).unwrap();
+
+        let backfilled = indexer.backfill_embeddings().unwrap();
+        assert_eq!(backfilled, 0);
+    }
+
+    #[test]
+    fn test_backfill_finds_blocks_without_embeddings() {
+        let dir = tempfile::tempdir().unwrap();
+        write_test_files(dir.path());
+
+        let store = Store::open_in_memory().unwrap();
+        let indexer = Indexer::new(store, None).unwrap();
+        indexer.index_directory(dir.path(), &NopProgress).unwrap();
+
+        let missing = indexer.store().get_blocks_without_embeddings(None).unwrap();
+        assert!(
+            !missing.is_empty(),
+            "indexed blocks should appear as missing embeddings"
+        );
     }
 
     #[test]

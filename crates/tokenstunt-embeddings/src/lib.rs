@@ -10,6 +10,7 @@ use anyhow::{Result, bail};
 pub trait EmbeddingProvider: Send + Sync {
     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>;
     fn dimensions(&self) -> usize;
+    fn model_name(&self) -> &str;
     async fn health_check(&self) -> Result<()>;
 }
 
@@ -41,9 +42,10 @@ mod tests {
             "nomic-embed-text",
             768,
             None,
-        );
-        assert!(provider.is_ok());
-        assert_eq!(provider.unwrap().dimensions(), 768);
+        )
+        .unwrap();
+        assert_eq!(provider.dimensions(), 768);
+        assert_eq!(provider.model_name(), "nomic-embed-text");
     }
 
     #[test]
@@ -54,9 +56,10 @@ mod tests {
             "text-embedding-3-small",
             1536,
             Some("sk-test"),
-        );
-        assert!(provider.is_ok());
-        assert_eq!(provider.unwrap().dimensions(), 1536);
+        )
+        .unwrap();
+        assert_eq!(provider.dimensions(), 1536);
+        assert_eq!(provider.model_name(), "text-embedding-3-small");
     }
 
     #[test]
