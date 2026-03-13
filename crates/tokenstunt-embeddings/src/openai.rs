@@ -1,4 +1,4 @@
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::EmbeddingProvider;
@@ -42,7 +42,11 @@ impl OpenAiCompatProvider {
 #[async_trait::async_trait]
 impl EmbeddingProvider for OpenAiCompatProvider {
     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        let url = format!("{}/v1/embeddings", self.endpoint);
+        let url = if self.endpoint.ends_with("/embeddings") {
+            self.endpoint.clone()
+        } else {
+            format!("{}/v1/embeddings", self.endpoint.trim_end_matches('/'))
+        };
         let request = EmbeddingRequest {
             model: self.model.clone(),
             input: texts.to_vec(),
@@ -85,7 +89,11 @@ impl EmbeddingProvider for OpenAiCompatProvider {
     }
 
     async fn health_check(&self) -> Result<()> {
-        let url = format!("{}/v1/models", self.endpoint);
+        let base = self
+            .endpoint
+            .trim_end_matches("/v1/embeddings")
+            .trim_end_matches('/');
+        let url = format!("{}/v1/models", base);
         let mut builder = self.client.get(&url);
         if let Some(key) = &self.api_key {
             builder = builder.bearer_auth(key);

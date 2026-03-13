@@ -10,18 +10,24 @@ pub struct Config {
 
 #[derive(Debug, Deserialize)]
 pub struct EmbeddingsConfig {
+    #[serde(default = "default_true")]
     pub enabled: bool,
     pub provider: String,
     pub model: String,
     pub endpoint: String,
     pub api_key: Option<String>,
     pub dimensions: usize,
+    #[allow(dead_code)]
     pub batch_size: Option<usize>,
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 impl Config {
     pub fn load(root: &Path) -> Result<Self> {
-        let path = root.join(".tokenstunt/config.toml");
+        let path = crate::paths::cache_config_path(root)?;
         if !path.exists() {
             return Ok(Self::default());
         }
@@ -36,6 +42,12 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    fn write_config(root: &Path, content: &str) {
+        let path = crate::paths::cache_config_path(root).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, content).unwrap();
+    }
+
     #[test]
     fn load_returns_default_when_no_config_file() {
         let dir = TempDir::new().unwrap();
@@ -46,10 +58,8 @@ mod tests {
     #[test]
     fn load_parses_embeddings_config() {
         let dir = TempDir::new().unwrap();
-        let config_dir = dir.path().join(".tokenstunt");
-        fs::create_dir_all(&config_dir).unwrap();
-        fs::write(
-            config_dir.join("config.toml"),
+        write_config(
+            dir.path(),
             r#"
 [embeddings]
 enabled = true
@@ -58,8 +68,7 @@ model = "text-embedding-3-small"
 endpoint = "https://api.openai.com/v1/embeddings"
 dimensions = 1536
 "#,
-        )
-        .unwrap();
+        );
 
         let config = Config::load(dir.path()).unwrap();
         let emb = config.embeddings.unwrap();
@@ -72,12 +81,31 @@ dimensions = 1536
     }
 
     #[test]
+    fn load_defaults_enabled_to_true_when_omitted() {
+        let dir = TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            r#"
+[embeddings]
+provider = "openai-compat"
+model = "nomic-embed-text-v1.5"
+endpoint = "http://localhost:1234/v1/embeddings"
+dimensions = 768
+"#,
+        );
+
+        let config = Config::load(dir.path()).unwrap();
+        let emb = config.embeddings.unwrap();
+        assert!(emb.enabled);
+        assert_eq!(emb.provider, "openai-compat");
+        assert_eq!(emb.dimensions, 768);
+    }
+
+    #[test]
     fn load_parses_full_embeddings_config() {
         let dir = TempDir::new().unwrap();
-        let config_dir = dir.path().join(".tokenstunt");
-        fs::create_dir_all(&config_dir).unwrap();
-        fs::write(
-            config_dir.join("config.toml"),
+        write_config(
+            dir.path(),
             r#"
 [embeddings]
 enabled = false
@@ -88,8 +116,7 @@ api_key = "sk-test"
 dimensions = 768
 batch_size = 32
 "#,
-        )
-        .unwrap();
+        );
 
         let config = Config::load(dir.path()).unwrap();
         let emb = config.embeddings.unwrap();

@@ -1,4 +1,4 @@
-# TokenStunt
+# Token Stunt
 
 ## Commands
 - Build: `cargo build`
@@ -11,7 +11,7 @@
 ## Architecture
 Cargo workspace, 7 crates:
 - `tokenstunt` — CLI binary (clap), config loading
-- `tokenstunt-server` — MCP server (rmcp, stdio), 4 tools: `ts_search`, `ts_symbol`, `ts_context`, `ts_overview`
+- `tokenstunt-server` — MCP server (rmcp, stdio), 6 tools: `ts_search`, `ts_symbol`, `ts_context`, `ts_overview`, `ts_setup`, `ts_impact`
 - `tokenstunt-index` — indexer orchestrator, file walker, file watcher (notify), startup reconciliation
 - `tokenstunt-search` — BM25 keyword search + optional hybrid cosine ranking
 - `tokenstunt-parser` — tree-sitter AST extraction, `LanguageExtractor` trait, per-language modules in `extract/`
@@ -25,7 +25,7 @@ Cargo workspace, 7 crates:
 - Parser uses `LanguageExtractor` trait with one module per language in `extract/`
 - Adding a language: create `extract/<lang>.rs`, implement `LanguageExtractor`, wire in `extract/mod.rs` + `languages.rs`
 - Feature-gated languages (Swift/Kotlin/Dart) use `#[cfg(feature = "lang-X")]`
-- Config lives in `.tokenstunt/config.toml`, database in `.tokenstunt/index.db`
+- Config and database live in `~/.cache/tokenstunt/<project-name>-<hash>/`
 
 ## Rules
 - Rust edition 2024, strict mode

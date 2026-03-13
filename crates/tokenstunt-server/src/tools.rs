@@ -4,13 +4,14 @@ use std::sync::Arc;
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
-use rmcp::{schemars, tool, tool_handler, tool_router, ErrorData as McpError};
+use rmcp::{ErrorData as McpError, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
 use tokenstunt_index::Indexer;
 use tokenstunt_search::{SearchEngine, SearchQuery};
 use tokenstunt_store::CodeBlockKind;
 
 use crate::format;
+use crate::render;
 
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -55,8 +56,6 @@ struct TsContextParams {
 struct TsOverviewParams {
     /// Scope to a directory path (e.g. "src/")
     scope: Option<String>,
-    /// Directory depth for module tree (default: 1)
-    depth: Option<i32>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -92,6 +91,7 @@ impl TokenStuntServer {
         let p = params.0;
         let engine = SearchEngine::new(self.indexer.store());
 
+        let query_text = p.query.clone();
         let query = SearchQuery {
             text: p.query,
             scope: p.scope,
@@ -115,7 +115,7 @@ impl TokenStuntServer {
             .map(|r| (r.block.clone(), Some(r.score)))
             .collect();
 
-        let output = format::format_blocks(&blocks);
+        let output = format::format_blocks(&query_text, &blocks);
         Ok(CallToolResult::success(vec![Content::text(output)]))
     }
 
@@ -142,9 +142,12 @@ impl TokenStuntServer {
             ))]));
         }
 
+        let mut out = render::header("Symbol", &p.name);
+        out.push_str("\n\n");
+
         let blocks: Vec<_> = results.iter().map(|b| (b.clone(), None)).collect();
-        let output = format::format_blocks(&blocks);
-        Ok(CallToolResult::success(vec![Content::text(output)]))
+        out.push_str(&format::format_symbol_blocks(&blocks));
+        Ok(CallToolResult::success(vec![Content::text(out)]))
     }
 
     #[tool(
@@ -170,7 +173,13 @@ impl TokenStuntServer {
         }
 
         let symbol = &symbols[0];
-        let mut output = format::format_block(symbol, None);
+        let file_path = symbol.file_path.as_deref().unwrap_or("unknown");
+        let location = format!("{file_path}:{}-{}", symbol.start_line, symbol.end_line);
+        let language = symbol.language.as_deref().unwrap_or("text");
+
+        let mut output = render::header("Context", &format!("{}  {}", p.symbol, location));
+        output.push_str("\n\n");
+        output.push_str(&render::code_block(language, &symbol.content));
 
         let direction = p.direction.as_deref().unwrap_or("both");
 
@@ -179,13 +188,26 @@ impl TokenStuntServer {
                 .get_dependencies(symbol.id)
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
             if !deps.is_empty() {
-                output.push_str("\n\n### Dependencies\n");
-                for (block, kind) in &deps {
-                    output.push_str(&format!(
-                        "\n- **{}** ({}) [{}]",
-                        block.name, block.kind, kind
-                    ));
-                }
+                let items: Vec<render::TreeItem> = deps
+                    .iter()
+                    .map(|(block, kind)| {
+                        let dep_path = block.file_path.as_deref().unwrap_or("unknown");
+                        let dep_loc = format!("{dep_path}:{}-{}", block.start_line, block.end_line);
+                        render::TreeItem {
+                            label: format!(
+                                "{}  {:<24} {:<28} {}",
+                                render::kind_label(&block.kind),
+                                block.name,
+                                dep_loc,
+                                render::capitalize(kind),
+                            ),
+                        }
+                    })
+                    .collect();
+
+                output.push('\n');
+                output.push('\n');
+                output.push_str(&render::render_tree_with_trunk("Dependencies", &items));
             }
         }
 
@@ -194,13 +216,26 @@ impl TokenStuntServer {
                 .get_dependents(symbol.id)
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
             if !deps.is_empty() {
-                output.push_str("\n\n### Dependents\n");
-                for (block, kind) in &deps {
-                    output.push_str(&format!(
-                        "\n- **{}** ({}) [{}]",
-                        block.name, block.kind, kind
-                    ));
-                }
+                let items: Vec<render::TreeItem> = deps
+                    .iter()
+                    .map(|(block, kind)| {
+                        let dep_path = block.file_path.as_deref().unwrap_or("unknown");
+                        let dep_loc = format!("{dep_path}:{}-{}", block.start_line, block.end_line);
+                        render::TreeItem {
+                            label: format!(
+                                "{}  {:<24} {:<28} {}",
+                                render::kind_label(&block.kind),
+                                block.name,
+                                dep_loc,
+                                render::capitalize(kind),
+                            ),
+                        }
+                    })
+                    .collect();
+
+                output.push('\n');
+                output.push('\n');
+                output.push_str(&render::render_tree_with_trunk("Dependents", &items));
             }
         }
 
@@ -218,19 +253,18 @@ impl TokenStuntServer {
         let p = params.0;
         let store = self.indexer.store();
         let scope = p.scope.as_deref().unwrap_or("");
-        let depth = p.depth.unwrap_or(1);
 
         if let Some(cached) = store
-            .get_overview_cache(scope, depth)
+            .get_overview_cache(scope, 1)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?
         {
             return Ok(CallToolResult::success(vec![Content::text(cached)]));
         }
 
-        let output = build_overview(store, &self.root, scope, depth)
+        let output = build_overview(store, &self.root, scope)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        let _ = store.set_overview_cache(scope, depth, &output);
+        let _ = store.set_overview_cache(scope, 1, &output);
 
         Ok(CallToolResult::success(vec![Content::text(output)]))
     }
@@ -243,12 +277,9 @@ impl TokenStuntServer {
         &self,
         _params: Parameters<TsSetupParams>,
     ) -> Result<CallToolResult, McpError> {
-        let report = crate::setup::build_setup_report(
-            self.indexer.store(),
-            &self.root,
-            self.has_embeddings,
-        )
-        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let report =
+            crate::setup::build_setup_report(self.indexer.store(), &self.root, self.has_embeddings)
+                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         Ok(CallToolResult::success(vec![Content::text(report)]))
     }
@@ -262,12 +293,8 @@ impl TokenStuntServer {
         params: Parameters<TsImpactParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = params.0;
-        let result = crate::impact::walk_dependents(
-            self.indexer.store(),
-            &p.symbol,
-            p.max_depth,
-        )
-        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let result = crate::impact::walk_dependents(self.indexer.store(), &p.symbol, p.max_depth)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         let output = crate::impact::format_impact(&result);
         Ok(CallToolResult::success(vec![Content::text(output)]))
@@ -280,53 +307,68 @@ fn build_overview(
     store: &tokenstunt_store::Store,
     root: &std::path::Path,
     scope: &str,
-    _depth: i32,
 ) -> anyhow::Result<String> {
     let file_count = store.file_count()?;
     let block_count = store.block_count()?;
 
-    let mut out = format!(
-        "## Project Overview\n\n- **Root**: {}\n- **Indexed files**: {}\n- **Code blocks**: {}\n",
-        root.display(),
-        file_count,
-        block_count,
-    );
+    let mut out = render::header("Overview", &root.display().to_string());
+    out.push_str("\n\n");
+    out.push_str(&render::kv_line("Files", &file_count.to_string()));
+    out.push('\n');
+    out.push_str(&render::kv_line("Code Blocks", &block_count.to_string()));
+    out.push('\n');
 
     let lang_stats = store.get_language_stats()?;
     if !lang_stats.is_empty() {
-        out.push_str("\n### Languages\n\n");
-        for (lang, count) in &lang_stats {
-            out.push_str(&format!("- **{lang}**: {count} files\n"));
-        }
+        let max_count = lang_stats.iter().map(|(_, c)| *c).max().unwrap_or(1);
+        let items: Vec<render::TreeItem> = lang_stats
+            .iter()
+            .map(|(lang, count)| {
+                let ratio = *count as f64 / max_count as f64;
+                let b = render::bar(ratio, 20);
+                render::TreeItem {
+                    label: format!("{lang:<16} {count:>3} files  {b}"),
+                }
+            })
+            .collect();
+        out.push('\n');
+        out.push_str(&render::render_tree_with_trunk("Languages", &items));
     }
 
-    let scope_arg = if scope.is_empty() {
-        None
-    } else {
-        Some(scope)
-    };
+    let scope_arg = if scope.is_empty() { None } else { Some(scope) };
 
     let dir_stats = store.get_directory_stats(scope_arg)?;
     if !dir_stats.is_empty() {
-        out.push_str("\n### Module Structure\n\n");
-        for (dir, fc, bc) in &dir_stats {
-            out.push_str(&format!("- `{dir}/` ({fc} files, {bc} blocks)\n"));
-        }
+        let items: Vec<render::TreeItem> = dir_stats
+            .iter()
+            .map(|(dir, fc, bc)| render::TreeItem {
+                label: format!("{dir:<16} {fc:>3} files   {bc:>4} blocks"),
+            })
+            .collect();
+        out.push('\n');
+        out.push_str(&render::render_tree_with_trunk("Modules", &items));
     }
 
     let symbols = store.get_exported_symbols(scope_arg)?;
     if !symbols.is_empty() {
-        out.push_str("\n### Public API\n\n");
-        for symbol in symbols.iter().take(20) {
-            let path = symbol.file_path.as_deref().unwrap_or("unknown");
-            out.push_str(&format!(
-                "- **{}** ({}) in `{}`\n",
-                symbol.name, symbol.kind, path
-            ));
-        }
+        let display_count = 20.min(symbols.len());
+        let mut items: Vec<render::TreeItem> = symbols
+            .iter()
+            .take(display_count)
+            .map(|s| {
+                let path = s.file_path.as_deref().unwrap_or("unknown");
+                render::TreeItem {
+                    label: format!("{}  {:<24} {}", render::kind_label(&s.kind), s.name, path,),
+                }
+            })
+            .collect();
         if symbols.len() > 20 {
-            out.push_str(&format!("- ... and {} more\n", symbols.len() - 20));
+            items.push(render::TreeItem {
+                label: format!("... {} more", symbols.len() - 20),
+            });
         }
+        out.push('\n');
+        out.push_str(&render::render_tree_with_trunk("Public API", &items));
     }
 
     let mut entry_paths: Vec<String> = symbols
@@ -344,13 +386,32 @@ fn build_overview(
     entry_paths.dedup();
 
     if !entry_paths.is_empty() {
-        out.push_str("\n### Entry Points\n\n");
-        for path in &entry_paths {
-            out.push_str(&format!("- `{path}`\n"));
-        }
+        let items: Vec<render::TreeItem> = entry_paths
+            .iter()
+            .map(|p| render::TreeItem { label: p.clone() })
+            .collect();
+        out.push('\n');
+        out.push_str(&render::render_tree_with_trunk("Entry Points", &items));
     }
 
     Ok(out)
+}
+
+#[tool_handler]
+impl rmcp::handler::server::ServerHandler for TokenStuntServer {
+    fn get_info(&self) -> InitializeResult {
+        let capabilities = ServerCapabilities::builder().enable_tools().build();
+
+        InitializeResult::new(capabilities)
+            .with_server_info(
+                Implementation::new("tokenstunt", env!("CARGO_PKG_VERSION"))
+                    .with_title("Token Stunt")
+                    .with_description("Smart code search for Claude Code. Finds the exact code you need — saves 95% of tokens.")
+            )
+            .with_instructions(
+                "Token Stunt provides AST-level semantic code search. Use ts_search instead of Grep+Read when looking for code by concept — it returns exact symbol bodies, saving 95% of tokens. Use ts_symbol for exact name lookups. Use ts_context to understand what a symbol calls and what calls it. Use ts_impact before refactoring to understand blast radius. Use ts_overview to orient in the project. Use ts_setup to check index health. Only use Read for files you need to modify. Recommended workflow: ts_overview → ts_search → ts_symbol → ts_context/ts_impact → Read."
+            )
+    }
 }
 
 #[cfg(test)]
@@ -446,7 +507,10 @@ mod tests {
         });
         let result = server.ts_search(params).await.unwrap();
         let text = text_content(&result);
-        assert!(text.contains("authenticateUser"), "expected block name in results");
+        assert!(
+            text.contains("authenticateUser"),
+            "expected block name in results"
+        );
     }
 
     #[tokio::test]
@@ -499,8 +563,14 @@ mod tests {
         let result = server.ts_context(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("authenticateUser"));
-        assert!(text.contains("Dependencies"), "should show dependencies section");
-        assert!(text.contains("validateToken"), "should list validateToken as dependency");
+        assert!(
+            text.contains("Dependencies"),
+            "should show dependencies section"
+        );
+        assert!(
+            text.contains("validateToken"),
+            "should list validateToken as dependency"
+        );
     }
 
     #[tokio::test]
@@ -514,22 +584,33 @@ mod tests {
         let text = text_content(&result);
         assert!(text.contains("Dependencies"));
         assert!(text.contains("validateToken"));
-        assert!(!text.contains("Dependents"), "should not show dependents section");
+        assert!(
+            !text.contains("Dependents"),
+            "should not show dependents section"
+        );
     }
 
     #[tokio::test]
     async fn test_ts_context_dependents_only() {
         let server = setup_server();
-        // validateToken is depended on by authenticateUser
         let params = Parameters(TsContextParams {
             symbol: "validateToken".to_string(),
             direction: Some("dependents".to_string()),
         });
         let result = server.ts_context(params).await.unwrap();
         let text = text_content(&result);
-        assert!(text.contains("Dependents"), "should show dependents section");
-        assert!(text.contains("authenticateUser"), "should list authenticateUser as dependent");
-        assert!(!text.contains("Dependencies"), "should not show dependencies section");
+        assert!(
+            text.contains("Dependents"),
+            "should show dependents section"
+        );
+        assert!(
+            text.contains("authenticateUser"),
+            "should list authenticateUser as dependent"
+        );
+        assert!(
+            !text.contains("Dependencies"),
+            "should not show dependencies section"
+        );
     }
 
     #[tokio::test]
@@ -547,57 +628,36 @@ mod tests {
     #[tokio::test]
     async fn test_ts_overview() {
         let server = setup_server();
-        let params = Parameters(TsOverviewParams {
-            scope: None,
-            depth: None,
-        });
+        let params = Parameters(TsOverviewParams { scope: None });
         let result = server.ts_overview(params).await.unwrap();
         let text = text_content(&result);
-        assert!(text.contains("Project Overview"), "should contain header");
+        assert!(text.contains("\u{25C6} Overview"), "should contain header");
         assert!(text.contains("/test"), "should contain root path");
         assert!(text.contains("Languages"), "should contain language stats");
-        assert!(text.contains("typescript"), "should list typescript language");
-        assert!(text.contains("Module Structure"), "should contain module structure");
-        assert!(text.contains("Public API"), "should list public API symbols");
-        assert!(text.contains("authenticateUser"), "should list authenticateUser");
+        assert!(
+            text.contains("typescript"),
+            "should list typescript language"
+        );
+        assert!(text.contains("Modules"), "should contain module structure");
+        assert!(
+            text.contains("Public API"),
+            "should list public API symbols"
+        );
+        assert!(
+            text.contains("authenticateUser"),
+            "should list authenticateUser"
+        );
     }
 
     #[tokio::test]
     async fn test_ts_overview_uses_cache() {
         let server = setup_server();
 
-        // First call populates cache
-        let params = Parameters(TsOverviewParams {
-            scope: None,
-            depth: None,
-        });
+        let params = Parameters(TsOverviewParams { scope: None });
         let first = text_content(&server.ts_overview(params).await.unwrap());
 
-        // Second call should return cached content
-        let params = Parameters(TsOverviewParams {
-            scope: None,
-            depth: None,
-        });
+        let params = Parameters(TsOverviewParams { scope: None });
         let second = text_content(&server.ts_overview(params).await.unwrap());
         assert_eq!(first, second);
-    }
-}
-
-#[tool_handler]
-impl rmcp::handler::server::ServerHandler for TokenStuntServer {
-    fn get_info(&self) -> InitializeResult {
-        let capabilities = ServerCapabilities::builder()
-            .enable_tools()
-            .build();
-
-        InitializeResult::new(capabilities)
-            .with_server_info(
-                Implementation::new("tokenstunt", env!("CARGO_PKG_VERSION"))
-                    .with_title("TokenStunt")
-                    .with_description("Smart code search for Claude Code. Finds the exact code you need — saves 95% of tokens.")
-            )
-            .with_instructions(
-                "TokenStunt provides AST-level semantic code search. Use ts_search instead of Grep+Read when looking for code by concept — it returns exact symbol bodies, saving 95% of tokens. Use ts_symbol for exact name lookups. Use ts_context to understand what a symbol calls and what calls it. Use ts_impact before refactoring to understand blast radius. Use ts_overview to orient in the project. Use ts_setup to check index health. Only use Read for files you need to modify. Recommended workflow: ts_overview → ts_search → ts_symbol → ts_context/ts_impact → Read."
-            )
     }
 }

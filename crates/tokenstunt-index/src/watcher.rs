@@ -45,11 +45,11 @@ impl FileWatcher {
 
         let mut watcher =
             notify::recommended_watcher(move |res: std::result::Result<Event, notify::Error>| {
-                if let Ok(event) = res {
-                    if let Ok(mut set) = pending.lock() {
-                        for path in event.paths {
-                            set.insert(path);
-                        }
+                if let Ok(event) = res
+                    && let Ok(mut set) = pending.lock()
+                {
+                    for path in event.paths {
+                        set.insert(path);
                     }
                 }
             })?;
@@ -78,7 +78,9 @@ mod tests {
 
         let store = Store::open_in_memory().unwrap();
         let indexer = Arc::new(Indexer::new(store, None).unwrap());
-        indexer.index_directory(dir.path()).unwrap();
+        indexer
+            .index_directory(dir.path(), &crate::progress::NopProgress)
+            .unwrap();
 
         let _watcher = FileWatcher::start(Arc::clone(&indexer), dir.path().to_path_buf()).unwrap();
 

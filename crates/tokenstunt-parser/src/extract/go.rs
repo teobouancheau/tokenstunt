@@ -17,8 +17,17 @@ impl LanguageExtractor for GoExtractor {
         symbols
     }
 
-    fn extract_references(&self, _root: Node<'_>, _source: &[u8]) -> Vec<RawReference> {
-        vec![]
+    fn extract_references(&self, root: Node<'_>, source: &[u8]) -> Vec<RawReference> {
+        let mut refs = Vec::new();
+        let mut cursor = root.walk();
+
+        for child in root.children(&mut cursor) {
+            if child.kind() == "import_declaration" {
+                extract_import_refs(child, source, &mut refs);
+            }
+        }
+
+        refs
     }
 }
 
@@ -199,4 +208,53 @@ fn extract_const_or_var(node: Node<'_>, source: &[u8], out: &mut Vec<ParsedSymbo
 
 fn extract_first_line(text: &str) -> String {
     text.lines().next().unwrap_or("").to_string()
+}
+
+fn extract_import_refs(node: Node<'_>, source: &[u8], out: &mut Vec<RawReference>) {
+    let mut cursor = node.walk();
+
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "import_spec" => extract_import_spec(child, source, out),
+            "import_spec_list" => {
+                let mut list_cursor = child.walk();
+                for spec in child.children(&mut list_cursor) {
+                    if spec.kind() == "import_spec" {
+                        extract_import_spec(spec, source, out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn extract_import_spec(node: Node<'_>, source: &[u8], out: &mut Vec<RawReference>) {
+    let path_node = match node.child_by_field_name("path") {
+        Some(n) => n,
+        None => return,
+    };
+
+    let raw_path = node_text(path_node, source);
+    let path = raw_path.trim_matches('"');
+
+    let target_name = if let Some(alias_node) = node.child_by_field_name("name") {
+        let alias = node_text(alias_node, source);
+        // "_" is a blank import, "." is a dot import — skip both
+        if alias == "_" || alias == "." {
+            return;
+        }
+        alias
+    } else {
+        path.split('/').next_back().unwrap_or(path).to_string()
+    };
+
+    let line = node.start_position().row as u32 + 1;
+
+    out.push(RawReference {
+        source_symbol: String::new(),
+        target_name,
+        kind: "import",
+        line,
+    });
 }

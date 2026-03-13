@@ -1,13 +1,15 @@
 use std::collections::{HashSet, VecDeque};
 
 use anyhow::Result;
-use tokenstunt_store::Store;
+use tokenstunt_store::{CodeBlockKind, Store};
+
+use crate::render;
 
 const MAX_DEPTH_CAP: u32 = 5;
 
 pub struct ImpactNode {
     pub name: String,
-    pub kind: String,
+    pub kind: CodeBlockKind,
     pub file_path: String,
     pub dep_kind: String,
     pub depth: u32,
@@ -19,7 +21,11 @@ pub struct ImpactResult {
     pub affected_files: Vec<String>,
 }
 
-pub fn walk_dependents(store: &Store, source: &str, max_depth: Option<u32>) -> Result<ImpactResult> {
+pub fn walk_dependents(
+    store: &Store,
+    source: &str,
+    max_depth: Option<u32>,
+) -> Result<ImpactResult> {
     let max_depth = max_depth.unwrap_or(3).min(MAX_DEPTH_CAP);
 
     let symbols = store.lookup_symbol(source, None)?;
@@ -58,7 +64,7 @@ pub fn walk_dependents(store: &Store, source: &str, max_depth: Option<u32>) -> R
 
             dependents.push(ImpactNode {
                 name: block.name.clone(),
-                kind: block.kind.to_string(),
+                kind: block.kind,
                 file_path,
                 dep_kind,
                 depth: depth + 1,
@@ -80,42 +86,64 @@ pub fn walk_dependents(store: &Store, source: &str, max_depth: Option<u32>) -> R
 
 pub fn format_impact(result: &ImpactResult) -> String {
     if result.dependents.is_empty() {
-        return format!(
-            "## Impact Analysis: `{}`\n\nNo dependents found. This symbol can be safely modified.",
-            result.source
-        );
+        let mut out = render::header("Impact", &result.source);
+        out.push_str("\n\n  No dependents found. This symbol can be safely modified.\n");
+        return out;
     }
 
-    let mut out = format!(
-        "## Impact Analysis: `{}`\n\n**{} dependents** across **{} files**\n",
-        result.source,
-        result.dependents.len(),
-        result.affected_files.len()
+    let dep_count = result.dependents.len();
+    let file_count = result.affected_files.len();
+    let mut out = render::header(
+        "Impact",
+        &format!(
+            "{}  {} dependents, {} files",
+            result.source, dep_count, file_count
+        ),
     );
+    out.push('\n');
 
     let max_depth = result.dependents.iter().map(|d| d.depth).max().unwrap_or(0);
 
     for depth in 1..=max_depth {
-        let label = if depth == 1 { "Direct" } else { "Transitive" };
-        let nodes: Vec<&ImpactNode> = result.dependents.iter().filter(|d| d.depth == depth).collect();
+        let label = if depth == 1 {
+            "Direct".to_string()
+        } else {
+            format!("Depth {depth}")
+        };
+        let nodes: Vec<&ImpactNode> = result
+            .dependents
+            .iter()
+            .filter(|d| d.depth == depth)
+            .collect();
         if nodes.is_empty() {
             continue;
         }
 
-        out.push_str(&format!("\n### {label} (depth {depth})\n\n"));
-        for node in &nodes {
-            out.push_str(&format!(
-                "- **{}** ({}) in `{}` [{}]\n",
-                node.name, node.kind, node.file_path, node.dep_kind
-            ));
-        }
+        let items: Vec<render::TreeItem> = nodes
+            .iter()
+            .map(|n| render::TreeItem {
+                label: format!(
+                    "{}  {:<24} {:<28} {}",
+                    render::kind_label(&n.kind),
+                    n.name,
+                    n.file_path,
+                    render::capitalize(&n.dep_kind),
+                ),
+            })
+            .collect();
+
+        out.push('\n');
+        out.push_str(&render::render_tree_with_trunk(&label, &items));
     }
 
     if !result.affected_files.is_empty() {
-        out.push_str("\n### Affected Files\n\n");
-        for path in &result.affected_files {
-            out.push_str(&format!("- `{path}`\n"));
-        }
+        let items: Vec<render::TreeItem> = result
+            .affected_files
+            .iter()
+            .map(|p| render::TreeItem { label: p.clone() })
+            .collect();
+        out.push('\n');
+        out.push_str(&render::render_tree_with_trunk("Affected Files", &items));
     }
 
     out
@@ -142,14 +170,26 @@ mod tests {
 
         let block_a = store
             .insert_code_block(
-                file_id, "funcA", CodeBlockKind::Function, 1, 5,
-                "function funcA() {}", "function funcA()", None,
+                file_id,
+                "funcA",
+                CodeBlockKind::Function,
+                1,
+                5,
+                "function funcA() {}",
+                "function funcA()",
+                None,
             )
             .unwrap();
         let block_b = store
             .insert_code_block(
-                file_id, "funcB", CodeBlockKind::Function, 10, 15,
-                "function funcB() { funcA(); }", "function funcB()", None,
+                file_id,
+                "funcB",
+                CodeBlockKind::Function,
+                10,
+                15,
+                "function funcB() { funcA(); }",
+                "function funcB()",
+                None,
             )
             .unwrap();
         let file_id2 = store
@@ -157,16 +197,31 @@ mod tests {
             .unwrap();
         let block_c = store
             .insert_code_block(
-                file_id2, "funcC", CodeBlockKind::Function, 1, 5,
-                "function funcC() { funcB(); }", "function funcC()", None,
+                file_id2,
+                "funcC",
+                CodeBlockKind::Function,
+                1,
+                5,
+                "function funcC() { funcB(); }",
+                "function funcC()",
+                None,
             )
             .unwrap();
 
         // B depends on A, C depends on B
-        store.insert_dependency(block_b, Some(block_a), "funcA", "call").unwrap();
-        store.insert_dependency(block_c, Some(block_b), "funcB", "call").unwrap();
+        store
+            .insert_dependency(block_b, Some(block_a), "funcA", "call")
+            .unwrap();
+        store
+            .insert_dependency(block_c, Some(block_b), "funcB", "call")
+            .unwrap();
 
-        TestFixture { store, block_a, block_b, block_c }
+        TestFixture {
+            store,
+            block_a,
+            block_b,
+            block_c,
+        }
     }
 
     #[test]
@@ -174,7 +229,7 @@ mod tests {
         let f = setup();
         let result = walk_dependents(&f.store, "funcC", None).unwrap();
         assert!(result.dependents.is_empty());
-        let _ = f.block_c; // used by setup
+        let _ = f.block_c;
     }
 
     #[test]
@@ -192,8 +247,18 @@ mod tests {
         let f = setup();
         let result = walk_dependents(&f.store, "funcA", None).unwrap();
         assert_eq!(result.dependents.len(), 2);
-        assert!(result.dependents.iter().any(|d| d.name == "funcB" && d.depth == 1));
-        assert!(result.dependents.iter().any(|d| d.name == "funcC" && d.depth == 2));
+        assert!(
+            result
+                .dependents
+                .iter()
+                .any(|d| d.name == "funcB" && d.depth == 1)
+        );
+        assert!(
+            result
+                .dependents
+                .iter()
+                .any(|d| d.name == "funcC" && d.depth == 2)
+        );
         assert_eq!(result.affected_files.len(), 2);
     }
 
@@ -201,21 +266,44 @@ mod tests {
     fn test_cycle_detection() {
         let store = Store::open_in_memory().unwrap();
         let repo_id = store.ensure_repo("/test", "test").unwrap();
-        let file_id = store.upsert_file(repo_id, "src/cycle.ts", 111, "typescript", 0).unwrap();
+        let file_id = store
+            .upsert_file(repo_id, "src/cycle.ts", 111, "typescript", 0)
+            .unwrap();
 
         let a = store
-            .insert_code_block(file_id, "cycleA", CodeBlockKind::Function, 1, 5, "fn a() {}", "fn a()", None)
+            .insert_code_block(
+                file_id,
+                "cycleA",
+                CodeBlockKind::Function,
+                1,
+                5,
+                "fn a() {}",
+                "fn a()",
+                None,
+            )
             .unwrap();
         let b = store
-            .insert_code_block(file_id, "cycleB", CodeBlockKind::Function, 10, 15, "fn b() {}", "fn b()", None)
+            .insert_code_block(
+                file_id,
+                "cycleB",
+                CodeBlockKind::Function,
+                10,
+                15,
+                "fn b() {}",
+                "fn b()",
+                None,
+            )
             .unwrap();
 
         // A -> B -> A (cycle)
-        store.insert_dependency(b, Some(a), "cycleA", "call").unwrap();
-        store.insert_dependency(a, Some(b), "cycleB", "call").unwrap();
+        store
+            .insert_dependency(b, Some(a), "cycleA", "call")
+            .unwrap();
+        store
+            .insert_dependency(a, Some(b), "cycleB", "call")
+            .unwrap();
 
         let result = walk_dependents(&store, "cycleA", None).unwrap();
-        // Should not loop forever; cycleB depends on cycleA, cycleA depends on cycleB
         assert!(result.dependents.len() <= 2);
     }
 
@@ -246,14 +334,14 @@ mod tests {
             dependents: vec![
                 ImpactNode {
                     name: "funcB".to_string(),
-                    kind: "function".to_string(),
+                    kind: CodeBlockKind::Function,
                     file_path: "src/core.ts".to_string(),
                     dep_kind: "call".to_string(),
                     depth: 1,
                 },
                 ImpactNode {
                     name: "funcC".to_string(),
-                    kind: "function".to_string(),
+                    kind: CodeBlockKind::Function,
                     file_path: "src/util.ts".to_string(),
                     dep_kind: "call".to_string(),
                     depth: 2,
@@ -262,8 +350,8 @@ mod tests {
             affected_files: vec!["src/core.ts".to_string(), "src/util.ts".to_string()],
         };
         let output = format_impact(&result);
-        assert!(output.contains("Direct (depth 1)"));
-        assert!(output.contains("Transitive (depth 2)"));
+        assert!(output.contains("Direct"));
+        assert!(output.contains("Depth 2"));
         assert!(output.contains("funcB"));
         assert!(output.contains("funcC"));
         assert!(output.contains("Affected Files"));

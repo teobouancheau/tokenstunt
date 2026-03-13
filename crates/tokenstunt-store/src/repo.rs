@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 use crate::models::{CodeBlock, CodeBlockKind};
 use crate::schema;
@@ -25,6 +25,7 @@ impl Store {
         read_conn.execute_batch("PRAGMA journal_mode = WAL;")?;
         read_conn.execute_batch("PRAGMA synchronous = NORMAL;")?;
         read_conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        read_conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
         Ok(Self {
             read_conn: Mutex::new(read_conn),
             write_conn: Mutex::new(write_conn),
@@ -84,12 +85,7 @@ impl Store {
         self.ensure_repo_with_conn(&conn, path, name)
     }
 
-    pub fn ensure_repo_with_conn(
-        &self,
-        conn: &Connection,
-        path: &str,
-        name: &str,
-    ) -> Result<i64> {
+    pub fn ensure_repo_with_conn(&self, conn: &Connection, path: &str, name: &str) -> Result<i64> {
         conn.execute(
             "INSERT OR IGNORE INTO repos (path, name) VALUES (?1, ?2)",
             params![path, name],
@@ -171,11 +167,7 @@ impl Store {
         self.delete_file_blocks_with_conn(&conn, file_id)
     }
 
-    pub fn delete_file_blocks_with_conn(
-        &self,
-        conn: &Connection,
-        file_id: i64,
-    ) -> Result<()> {
+    pub fn delete_file_blocks_with_conn(&self, conn: &Connection, file_id: i64) -> Result<()> {
         conn.execute(
             "DELETE FROM code_blocks WHERE file_id = ?1",
             params![file_id],
@@ -183,6 +175,7 @@ impl Store {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_code_block(
         &self,
         file_id: i64,
@@ -200,6 +193,7 @@ impl Store {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_code_block_with_conn(
         &self,
         conn: &Connection,
@@ -262,11 +256,7 @@ impl Store {
         Ok(blocks)
     }
 
-    pub fn lookup_symbol(
-        &self,
-        name: &str,
-        kind: Option<CodeBlockKind>,
-    ) -> Result<Vec<CodeBlock>> {
+    pub fn lookup_symbol(&self, name: &str, kind: Option<CodeBlockKind>) -> Result<Vec<CodeBlock>> {
         let conn = self.read_lock()?;
         self.lookup_symbol_with_conn(&conn, name, kind)
     }
@@ -422,9 +412,7 @@ impl Store {
              WHERE resolved = 0",
         )?;
         let rows = stmt
-            .query_map([], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-            })?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
@@ -457,8 +445,7 @@ impl Store {
 
     pub fn file_count(&self) -> Result<i64> {
         let conn = self.read_lock()?;
-        let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))?;
         Ok(count)
     }
 
@@ -467,6 +454,19 @@ impl Store {
         let count: i64 =
             conn.query_row("SELECT COUNT(*) FROM code_blocks", [], |row| row.get(0))?;
         Ok(count)
+    }
+
+    pub fn delete_file_by_path_with_conn(
+        &self,
+        conn: &Connection,
+        repo_id: i64,
+        path: &str,
+    ) -> Result<bool> {
+        let deleted = conn.execute(
+            "DELETE FROM files WHERE repo_id = ?1 AND path = ?2",
+            params![repo_id, path],
+        )?;
+        Ok(deleted > 0)
     }
 
     pub fn delete_stale_files(&self, repo_id: i64, current_paths: &[String]) -> Result<u64> {
@@ -702,8 +702,7 @@ impl Store {
 
     pub fn embedding_count(&self) -> Result<i64> {
         let conn = self.read_lock()?;
-        let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM embeddings", [], |row| row.get(0))?;
         Ok(count)
     }
 
@@ -837,7 +836,9 @@ mod tests {
                 None,
             )
             .unwrap();
-        let results = store.search_fts("authenticate*", None, None, None, 10).unwrap();
+        let results = store
+            .search_fts("authenticate*", None, None, None, 10)
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "authenticateUser");
     }
@@ -1094,27 +1095,63 @@ mod tests {
     fn test_language_stats() {
         let store = Store::open_in_memory().unwrap();
         let repo_id = store.ensure_repo("/test", "test").unwrap();
-        store.upsert_file(repo_id, "a.ts", 1, "typescript", 0).unwrap();
-        store.upsert_file(repo_id, "b.ts", 2, "typescript", 0).unwrap();
+        store
+            .upsert_file(repo_id, "a.ts", 1, "typescript", 0)
+            .unwrap();
+        store
+            .upsert_file(repo_id, "b.ts", 2, "typescript", 0)
+            .unwrap();
         store.upsert_file(repo_id, "c.py", 3, "python", 0).unwrap();
 
         let stats = store.get_language_stats().unwrap();
-        assert!(stats.iter().any(|(lang, count)| lang == "typescript" && *count == 2));
-        assert!(stats.iter().any(|(lang, count)| lang == "python" && *count == 1));
+        assert!(
+            stats
+                .iter()
+                .any(|(lang, count)| lang == "typescript" && *count == 2)
+        );
+        assert!(
+            stats
+                .iter()
+                .any(|(lang, count)| lang == "python" && *count == 1)
+        );
     }
 
     #[test]
     fn test_directory_stats() {
         let store = Store::open_in_memory().unwrap();
         let repo_id = store.ensure_repo("/test", "test").unwrap();
-        let f1 = store.upsert_file(repo_id, "src/main.ts", 1, "typescript", 0).unwrap();
-        let f2 = store.upsert_file(repo_id, "src/lib.ts", 2, "typescript", 0).unwrap();
-        store.upsert_file(repo_id, "tests/test.ts", 3, "typescript", 0).unwrap();
-        store
-            .insert_code_block(f1, "main", CodeBlockKind::Function, 1, 5, "fn main() {}", "fn main()", None)
+        let f1 = store
+            .upsert_file(repo_id, "src/main.ts", 1, "typescript", 0)
+            .unwrap();
+        let f2 = store
+            .upsert_file(repo_id, "src/lib.ts", 2, "typescript", 0)
             .unwrap();
         store
-            .insert_code_block(f2, "lib", CodeBlockKind::Function, 1, 5, "fn lib() {}", "fn lib()", None)
+            .upsert_file(repo_id, "tests/test.ts", 3, "typescript", 0)
+            .unwrap();
+        store
+            .insert_code_block(
+                f1,
+                "main",
+                CodeBlockKind::Function,
+                1,
+                5,
+                "fn main() {}",
+                "fn main()",
+                None,
+            )
+            .unwrap();
+        store
+            .insert_code_block(
+                f2,
+                "lib",
+                CodeBlockKind::Function,
+                1,
+                5,
+                "fn lib() {}",
+                "fn lib()",
+                None,
+            )
             .unwrap();
 
         let stats = store.get_directory_stats(None).unwrap();
@@ -1129,17 +1166,31 @@ mod tests {
     fn test_exported_symbols() {
         let store = Store::open_in_memory().unwrap();
         let repo_id = store.ensure_repo("/test", "test").unwrap();
-        let file_id = store.upsert_file(repo_id, "src/main.ts", 1, "typescript", 0).unwrap();
+        let file_id = store
+            .upsert_file(repo_id, "src/main.ts", 1, "typescript", 0)
+            .unwrap();
         let parent_id = store
             .insert_code_block(
-                file_id, "MyClass", CodeBlockKind::Class, 1, 20,
-                "class MyClass {}", "class MyClass", None,
+                file_id,
+                "MyClass",
+                CodeBlockKind::Class,
+                1,
+                20,
+                "class MyClass {}",
+                "class MyClass",
+                None,
             )
             .unwrap();
         store
             .insert_code_block(
-                file_id, "myMethod", CodeBlockKind::Method, 5, 10,
-                "myMethod() {}", "myMethod()", Some(parent_id),
+                file_id,
+                "myMethod",
+                CodeBlockKind::Method,
+                5,
+                10,
+                "myMethod() {}",
+                "myMethod()",
+                Some(parent_id),
             )
             .unwrap();
 
@@ -1160,15 +1211,21 @@ mod tests {
 
         assert!(store.get_overview_cache("/test", 1).unwrap().is_none());
 
-        store.set_overview_cache("/test", 1, "cached overview content").unwrap();
+        store
+            .set_overview_cache("/test", 1, "cached overview content")
+            .unwrap();
         let cached = store.get_overview_cache("/test", 1).unwrap();
         assert_eq!(cached.as_deref(), Some("cached overview content"));
 
-        store.set_overview_cache("/test", 1, "updated content").unwrap();
+        store
+            .set_overview_cache("/test", 1, "updated content")
+            .unwrap();
         let updated = store.get_overview_cache("/test", 1).unwrap();
         assert_eq!(updated.as_deref(), Some("updated content"));
 
-        store.set_overview_cache("/test", 2, "depth 2 content").unwrap();
+        store
+            .set_overview_cache("/test", 2, "depth 2 content")
+            .unwrap();
         store.invalidate_overview_cache("/test").unwrap();
         assert!(store.get_overview_cache("/test", 1).unwrap().is_none());
         assert!(store.get_overview_cache("/test", 2).unwrap().is_none());

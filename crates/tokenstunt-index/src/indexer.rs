@@ -1,8 +1,9 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
+use tokio::task::JoinHandle;
 use tracing::{info, warn};
 use xxhash_rust::xxh3::xxh3_64;
 
@@ -10,12 +11,14 @@ use tokenstunt_embeddings::EmbeddingProvider;
 use tokenstunt_parser::{Language, LanguageRegistry, ParsedSymbol, SymbolExtractor};
 use tokenstunt_store::{CodeBlockKind, Connection, Store};
 
+use crate::progress::IndexProgress;
 use crate::walker;
 
 pub struct Indexer {
     store: Store,
     extractor: SymbolExtractor,
     embedder: Option<Arc<dyn EmbeddingProvider>>,
+    embedding_handles: Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl Indexer {
@@ -26,6 +29,7 @@ impl Indexer {
             store,
             extractor,
             embedder,
+            embedding_handles: Mutex::new(Vec::new()),
         })
     }
 
@@ -37,10 +41,36 @@ impl Indexer {
         self.embedder.as_ref()
     }
 
-    pub fn index_directory(&self, root: &Path) -> Result<IndexStats> {
-        let root_str = root
-            .to_str()
-            .context("non-UTF-8 path")?;
+    fn spawn_embeddings_if_needed(&self, embedding_work: Vec<(i64, String)>) {
+        if !embedding_work.is_empty()
+            && let Some(embedder) = &self.embedder
+        {
+            let handle = spawn_embedding_task(
+                self.store.db_path().to_path_buf(),
+                Arc::clone(embedder),
+                embedding_work,
+            );
+            if let Ok(mut handles) = self.embedding_handles.lock() {
+                handles.push(handle);
+            }
+        }
+    }
+
+    pub async fn await_embeddings(&self) {
+        let handles: Vec<_> = {
+            let mut lock = self
+                .embedding_handles
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            std::mem::take(&mut *lock)
+        };
+        for handle in handles {
+            let _ = handle.await;
+        }
+    }
+
+    pub fn index_directory(&self, root: &Path, progress: &dyn IndexProgress) -> Result<IndexStats> {
+        let root_str = root.to_str().context("non-UTF-8 path")?;
         let repo_name = root
             .file_name()
             .and_then(|n| n.to_str())
@@ -50,6 +80,7 @@ impl Indexer {
 
         let entries = walker::walk_directory(root)?;
         info!(files = entries.len(), "discovered files");
+        progress.on_discover(entries.len());
 
         let registry = LanguageRegistry::new()?;
 
@@ -73,6 +104,7 @@ impl Indexer {
                     Ok(s) => s,
                     Err(e) => {
                         warn!(path = %entry.path.display(), error = %e, "failed to read file");
+                        progress.on_file_error(&rel_path, &e.to_string());
                         stats.errors += 1;
                         continue;
                     }
@@ -80,14 +112,18 @@ impl Indexer {
 
                 let content_hash = xxh3_64(source.as_bytes());
 
-                if let Ok(Some(existing_hash)) = self.store.get_file_hash_with_conn(conn, repo_id, &rel_path) {
-                    if existing_hash == content_hash {
-                        stats.skipped += 1;
-                        continue;
-                    }
+                if let Ok(Some(existing_hash)) =
+                    self.store.get_file_hash_with_conn(conn, repo_id, &rel_path)
+                    && existing_hash == content_hash
+                {
+                    progress.on_file_skipped(&rel_path);
+                    stats.skipped += 1;
+                    continue;
                 }
 
                 if !registry.is_supported(entry.language) {
+                    progress.on_file_skipped(&rel_path);
+                    stats.skipped += 1;
                     continue;
                 }
 
@@ -143,9 +179,11 @@ impl Indexer {
                                 .unwrap_or(fallback_id)
                         };
 
-                        let target = self
-                            .store
-                            .lookup_symbol_with_conn(conn, &reference.target_name, None)?;
+                        let target = self.store.lookup_symbol_with_conn(
+                            conn,
+                            &reference.target_name,
+                            None,
+                        )?;
                         let target_block_id = target.first().map(|b| b.id);
 
                         self.store.insert_dependency_with_conn(
@@ -158,24 +196,37 @@ impl Indexer {
                     }
                 }
 
+                progress.on_file_indexed(&rel_path);
                 stats.files += 1;
             }
 
-            let deleted = self.store.delete_stale_files_with_conn(conn, repo_id, &indexed_paths)?;
+            let deleted = self
+                .store
+                .delete_stale_files_with_conn(conn, repo_id, &indexed_paths)?;
             stats.deleted_files = deleted;
+
+            // Resolve unresolved dependencies now that all symbols are indexed
+            let unresolved = self.store.get_unresolved_dependencies_with_conn(conn)?;
+            for (source_block_id, target_name, _kind) in &unresolved {
+                let targets = self
+                    .store
+                    .lookup_symbol_with_conn(conn, target_name, None)?;
+                if let Some(target) = targets.first() {
+                    self.store.resolve_dependency_with_conn(
+                        conn,
+                        *source_block_id,
+                        target_name,
+                        target.id,
+                    )?;
+                }
+            }
 
             Ok(stats)
         })?;
 
-        if !embedding_work.is_empty() {
-            if let Some(embedder) = &self.embedder {
-                spawn_embedding_task(
-                    self.store.db_path().to_path_buf(),
-                    Arc::clone(embedder),
-                    embedding_work,
-                );
-            }
-        }
+        self.spawn_embeddings_if_needed(embedding_work);
+
+        progress.on_complete(stats.files, stats.blocks, stats.skipped, stats.errors);
 
         info!(
             files = stats.files,
@@ -227,11 +278,10 @@ impl Indexer {
 
                 if let Ok(Some(existing_hash)) =
                     self.store.get_file_hash_with_conn(conn, repo_id, &rel_path)
+                    && existing_hash == content_hash
                 {
-                    if existing_hash == content_hash {
-                        stats.unchanged += 1;
-                        continue;
-                    }
+                    stats.unchanged += 1;
+                    continue;
                 }
 
                 if !registry.is_supported(entry.language) {
@@ -239,7 +289,13 @@ impl Indexer {
                 }
 
                 self.index_file_with_conn(
-                    conn, repo_id, root, &entry.path, &rel_path, entry.language, &source,
+                    conn,
+                    repo_id,
+                    root,
+                    &entry.path,
+                    &rel_path,
+                    entry.language,
+                    &source,
                     &mut embedding_work,
                 )?;
                 stats.updated += 1;
@@ -258,15 +314,7 @@ impl Indexer {
             Ok(stats)
         })?;
 
-        if !embedding_work.is_empty() {
-            if let Some(embedder) = &self.embedder {
-                spawn_embedding_task(
-                    self.store.db_path().to_path_buf(),
-                    Arc::clone(embedder),
-                    embedding_work,
-                );
-            }
-        }
+        self.spawn_embeddings_if_needed(embedding_work);
 
         info!(
             updated = stats.updated,
@@ -289,7 +337,9 @@ impl Indexer {
         let mut embedding_work: Vec<(i64, String)> = Vec::new();
 
         let stats = self.store.write_transaction(|conn| {
-            let repo_id = self.store.ensure_repo_with_conn(conn, root_str, repo_name)?;
+            let repo_id = self
+                .store
+                .ensure_repo_with_conn(conn, root_str, repo_name)?;
             let mut stats = ReindexStats::default();
 
             for path in paths {
@@ -300,11 +350,8 @@ impl Indexer {
                     .to_string();
 
                 if !path.exists() {
-                    let current_paths: Vec<String> = vec![];
-                    // File was deleted — remove it from the DB
                     self.store
-                        .delete_stale_files_with_conn(conn, repo_id, &current_paths)
-                        .ok();
+                        .delete_file_by_path_with_conn(conn, repo_id, &rel_path)?;
                     stats.deleted += 1;
 
                     self.invalidate_cache_for_path(conn, &rel_path)?;
@@ -333,15 +380,20 @@ impl Indexer {
 
                 if let Ok(Some(existing_hash)) =
                     self.store.get_file_hash_with_conn(conn, repo_id, &rel_path)
+                    && existing_hash == content_hash
                 {
-                    if existing_hash == content_hash {
-                        stats.unchanged += 1;
-                        continue;
-                    }
+                    stats.unchanged += 1;
+                    continue;
                 }
 
                 self.index_file_with_conn(
-                    conn, repo_id, root, path, &rel_path, language, &source,
+                    conn,
+                    repo_id,
+                    root,
+                    path,
+                    &rel_path,
+                    language,
+                    &source,
                     &mut embedding_work,
                 )?;
                 stats.reindexed += 1;
@@ -352,15 +404,7 @@ impl Indexer {
             Ok(stats)
         })?;
 
-        if !embedding_work.is_empty() {
-            if let Some(embedder) = &self.embedder {
-                spawn_embedding_task(
-                    self.store.db_path().to_path_buf(),
-                    Arc::clone(embedder),
-                    embedding_work,
-                );
-            }
-        }
+        self.spawn_embeddings_if_needed(embedding_work);
 
         info!(
             reindexed = stats.reindexed,
@@ -373,6 +417,7 @@ impl Indexer {
         Ok(stats)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn index_file_with_conn(
         &self,
         conn: &Connection,
@@ -435,9 +480,9 @@ impl Indexer {
                         .unwrap_or(fallback_id)
                 };
 
-                let target = self
-                    .store
-                    .lookup_symbol_with_conn(conn, &reference.target_name, None)?;
+                let target =
+                    self.store
+                        .lookup_symbol_with_conn(conn, &reference.target_name, None)?;
                 let target_block_id = target.first().map(|b| b.id);
 
                 self.store.insert_dependency_with_conn(
@@ -458,7 +503,8 @@ impl Indexer {
         let parts: Vec<&str> = rel_path.split('/').collect();
         for i in 1..parts.len() {
             let scope = format!("{}/", parts[..i].join("/"));
-            self.store.invalidate_overview_cache_with_conn(conn, &scope)?;
+            self.store
+                .invalidate_overview_cache_with_conn(conn, &scope)?;
         }
         // Also invalidate root scope
         self.store.invalidate_overview_cache_with_conn(conn, "")?;
@@ -498,11 +544,7 @@ fn count_symbols(symbol: &ParsedSymbol) -> u64 {
     1 + symbol.children.iter().map(count_symbols).sum::<u64>()
 }
 
-fn collect_embedding_work(
-    symbol: &ParsedSymbol,
-    block_id: i64,
-    work: &mut Vec<(i64, String)>,
-) {
+fn collect_embedding_work(symbol: &ParsedSymbol, block_id: i64, work: &mut Vec<(i64, String)>) {
     if !symbol.content.is_empty() {
         work.push((block_id, symbol.content.clone()));
     }
@@ -515,7 +557,7 @@ fn spawn_embedding_task(
     db_path: PathBuf,
     embedder: Arc<dyn EmbeddingProvider>,
     work: Vec<(i64, String)>,
-) {
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let store = match tokenstunt_store::Store::open(&db_path) {
             Ok(s) => s,
@@ -549,7 +591,7 @@ fn spawn_embedding_task(
         }
 
         info!(total = work.len(), "background embedding complete");
-    });
+    })
 }
 
 #[derive(Debug, Default)]
@@ -579,6 +621,7 @@ pub struct ReindexStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::progress::NopProgress;
 
     fn write_test_files(dir: &Path) {
         let src = dir.join("src");
@@ -604,7 +647,7 @@ mod tests {
 
         let store = Store::open_in_memory().unwrap();
         let indexer = Indexer::new(store, None).unwrap();
-        let stats = indexer.index_directory(dir.path()).unwrap();
+        let stats = indexer.index_directory(dir.path(), &NopProgress).unwrap();
 
         assert!(stats.files >= 2);
         assert!(stats.blocks >= 2);
@@ -621,10 +664,10 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let indexer = Indexer::new(store, None).unwrap();
 
-        let stats1 = indexer.index_directory(dir.path()).unwrap();
+        let stats1 = indexer.index_directory(dir.path(), &NopProgress).unwrap();
         assert!(stats1.files >= 2);
 
-        let stats2 = indexer.index_directory(dir.path()).unwrap();
+        let stats2 = indexer.index_directory(dir.path(), &NopProgress).unwrap();
         assert!(stats2.skipped >= 2);
         assert_eq!(stats2.files, 0);
     }
@@ -643,7 +686,7 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let indexer = Indexer::new(store, None).unwrap();
 
-        indexer.index_directory(dir.path()).unwrap();
+        indexer.index_directory(dir.path(), &NopProgress).unwrap();
         let initial_count = indexer.store().block_count().unwrap();
         assert!(initial_count >= 1);
 
@@ -676,7 +719,7 @@ mod tests {
 
         let store = Store::open_in_memory().unwrap();
         let indexer = Indexer::new(store, None).unwrap();
-        indexer.index_directory(dir.path()).unwrap();
+        indexer.index_directory(dir.path(), &NopProgress).unwrap();
         assert!(indexer.store().file_count().unwrap() >= 2);
 
         // Delete one file
@@ -704,7 +747,7 @@ mod tests {
 
         let store = Store::open_in_memory().unwrap();
         let indexer = Indexer::new(store, None).unwrap();
-        indexer.index_directory(dir.path()).unwrap();
+        indexer.index_directory(dir.path(), &NopProgress).unwrap();
 
         let repo_id = indexer
             .store()
@@ -729,7 +772,7 @@ mod tests {
 
         let store = Store::open_in_memory().unwrap();
         let indexer = Indexer::new(store, None).unwrap();
-        indexer.index_directory(dir.path()).unwrap();
+        indexer.index_directory(dir.path(), &NopProgress).unwrap();
 
         // Modify the file
         std::fs::write(
@@ -758,7 +801,7 @@ mod tests {
 
         let store = Store::open_in_memory().unwrap();
         let indexer = Indexer::new(store, None).unwrap();
-        indexer.index_directory(dir.path()).unwrap();
+        indexer.index_directory(dir.path(), &NopProgress).unwrap();
 
         let stats = indexer
             .reindex_files(dir.path(), &[src.join("greet.ts")])
@@ -786,15 +829,27 @@ mod tests {
 
         let store = Store::open_in_memory().unwrap();
         let indexer = Indexer::new(store, None).unwrap();
-        indexer.index_directory(dir.path()).unwrap();
+        indexer.index_directory(dir.path(), &NopProgress).unwrap();
 
         let handler_blocks = indexer.store().lookup_symbol("handler", None).unwrap();
         assert!(!handler_blocks.is_empty());
 
+        // UserService should be resolved after the resolution pass
         let unresolved = indexer.store().get_unresolved_dependencies().unwrap();
         assert!(
-            unresolved.iter().any(|(_, name, _)| name == "UserService"),
-            "expected unresolved dependency for UserService, got: {unresolved:?}"
+            !unresolved.iter().any(|(_, name, _)| name == "UserService"),
+            "UserService should be resolved, but found in unresolved: {unresolved:?}"
+        );
+
+        let service_blocks = indexer.store().lookup_symbol("UserService", None).unwrap();
+        assert!(!service_blocks.is_empty());
+        let dependents = indexer
+            .store()
+            .get_dependents(service_blocks[0].id)
+            .unwrap();
+        assert!(
+            !dependents.is_empty(),
+            "UserService should have dependents after resolution"
         );
     }
 }

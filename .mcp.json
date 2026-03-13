@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "tokenstunt": {
-      "type": "stdio",
-      "command": "./target/release/tokenstunt",
-      "args": ["serve"]
-    }
-  }
-}

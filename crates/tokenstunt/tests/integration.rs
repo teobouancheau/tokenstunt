@@ -48,7 +48,9 @@ class Calculator:
 
     let store = Store::open_in_memory().unwrap();
     let indexer = Indexer::new(store, None).unwrap();
-    let stats = indexer.index_directory(dir.path()).unwrap();
+    let stats = indexer
+        .index_directory(dir.path(), &tokenstunt_index::NopProgress)
+        .unwrap();
 
     assert!(stats.files >= 2, "expected at least 2 files indexed");
     assert!(stats.blocks >= 4, "expected at least 4 blocks indexed");
@@ -172,7 +174,9 @@ type Server struct {
     // Index
     let store = Store::open_in_memory().unwrap();
     let indexer = Indexer::new(store, None).unwrap();
-    indexer.index_directory(dir.path()).unwrap();
+    indexer
+        .index_directory(dir.path(), &tokenstunt_index::NopProgress)
+        .unwrap();
 
     let store = indexer.store();
 
@@ -222,8 +226,5 @@ type Server struct {
         .unwrap();
     let recon_stats = indexer.reconcile(dir.path(), repo_id).unwrap();
     assert_eq!(recon_stats.updated, 0, "no files should need updating");
-    assert!(
-        recon_stats.unchanged >= 5,
-        "all files should be unchanged"
-    );
+    assert!(recon_stats.unchanged >= 5, "all files should be unchanged");
 }

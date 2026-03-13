@@ -1,15 +1,47 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  version:
+    name: Calculate Version
+    runs-on: ubuntu-latest
+    if: github.actor == 'teobouancheau'
+    outputs:
+      version: ${{ steps.calc.outputs.version }}
+      tag: ${{ steps.calc.outputs.tag }}
+      name: ${{ steps.calc.outputs.name }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Calculate version
+        id: calc
+        run: |
+          YEAR=$(date -u +%Y)
+          MONTHDAY=$(date -u +%-m%d)
+          PREFIX="${YEAR}.${MONTHDAY}"
+          EXISTING=$(git tag -l "v${PREFIX}.*" | sort -V | tail -1)
+          if [[ -z "$EXISTING" ]]; then
+            PATCH=0
+          else
+            LAST_PATCH=$(echo "$EXISTING" | sed "s/v${PREFIX}\.//")
+            PATCH=$((LAST_PATCH + 1))
+          fi
+          VERSION="${PREFIX}.${PATCH}"
+          DISPLAY_DATE=$(date -u +%Y-%m-%d)
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "name=${DISPLAY_DATE}" >> "$GITHUB_OUTPUT"
+
   build:
+    name: Build (${{ matrix.target }})
+    needs: version
     strategy:
       matrix:
         include:
@@ -21,9 +53,7 @@ jobs:
             os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-
     runs-on: ${{ matrix.os }}
-
     steps:
       - uses: actions/checkout@v6
 
@@ -32,43 +62,53 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - uses: Swatinem/rust-cache@v2
+
       - name: Install cross-compilation tools
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
-      - name: Build
+      - name: Set version
+        run: sed -i.bak 's/^version = ".*"/version = "${{ needs.version.outputs.version }}"/' Cargo.toml && rm -f Cargo.toml.bak
+
+      - name: Run tests
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: cargo test
+
+      - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
-      - name: Package
+      - name: Package binary
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ../../../tokenstunt-${{ matrix.target }}.tar.gz tokenstunt
-          cd ../../..
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v5
         with:
           name: tokenstunt-${{ matrix.target }}
           path: tokenstunt-${{ matrix.target }}.tar.gz
 
   release:
-    needs: build
+    name: Publish Release
+    needs: [version, build]
     runs-on: ubuntu-latest
-
+    environment: release
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v8
+      - name: Download artifacts
+        uses: actions/download-artifact@v5
         with:
           path: artifacts
 
-      - name: Create release
+      - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.name }}
           files: artifacts/**/*.tar.gz
           generate_release_notes: true
+          make_latest: true

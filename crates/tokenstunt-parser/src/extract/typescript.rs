@@ -205,7 +205,10 @@ fn extract_variable_decl(node: Node<'_>, source: &[u8], out: &mut Vec<ParsedSymb
 
             let value = child.child_by_field_name("value");
             let is_arrow_or_function = value.is_some_and(|v| {
-                matches!(v.kind(), "arrow_function" | "function_expression" | "function")
+                matches!(
+                    v.kind(),
+                    "arrow_function" | "function_expression" | "function"
+                )
             });
 
             let kind = if is_arrow_or_function {
@@ -235,11 +238,8 @@ fn extract_import_refs(node: Node<'_>, source: &[u8], out: &mut Vec<RawReference
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
-        match child.kind() {
-            "import_clause" => {
-                collect_import_names(child, source, line, out);
-            }
-            _ => {}
+        if child.kind() == "import_clause" {
+            collect_import_names(child, source, line, out);
         }
     }
 }

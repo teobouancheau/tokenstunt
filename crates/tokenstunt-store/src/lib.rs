@@ -1,6 +1,6 @@
-mod schema;
 mod models;
 mod repo;
+mod schema;
 
 pub use models::{CodeBlock, CodeBlockKind};
 pub use repo::Store;

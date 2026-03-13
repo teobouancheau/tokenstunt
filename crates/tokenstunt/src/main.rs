@@ -1,4 +1,6 @@
 mod config;
+mod output;
+mod paths;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,7 +12,11 @@ use tokenstunt_embeddings::EmbeddingProvider;
 use tracing::info;
 
 #[derive(Parser)]
-#[command(name = "tokenstunt", version, about = "AST-level semantic code search MCP server")]
+#[command(
+    name = "tokenstunt",
+    version,
+    about = "AST-level semantic code search MCP server"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -51,8 +57,35 @@ fn resolve_root(root: Option<PathBuf>) -> Result<PathBuf> {
     std::fs::canonicalize(&path).with_context(|| format!("cannot resolve path: {}", path.display()))
 }
 
-fn resolve_db(db: Option<PathBuf>, root: &std::path::Path) -> PathBuf {
-    db.unwrap_or_else(|| root.join(".tokenstunt").join("index.db"))
+fn resolve_db(db: Option<PathBuf>, root: &std::path::Path) -> Result<PathBuf> {
+    match db {
+        Some(path) => Ok(path),
+        None => paths::cache_db_path(root),
+    }
+}
+
+struct CommandContext {
+    root: PathBuf,
+    store: tokenstunt_store::Store,
+    embedder: Option<Arc<dyn EmbeddingProvider>>,
+}
+
+fn init_context(root: Option<PathBuf>, db: Option<PathBuf>) -> Result<CommandContext> {
+    let root = resolve_root(root)?;
+    let cfg = config::Config::load(&root)?;
+    let embedder = load_embedder(&cfg)?;
+    let db_path = resolve_db(db, &root)?;
+
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let store = tokenstunt_store::Store::open(&db_path)?;
+    Ok(CommandContext {
+        root,
+        store,
+        embedder,
+    })
 }
 
 fn init_logging(default_level: &str) {
@@ -98,34 +131,21 @@ async fn main() -> Result<()> {
         Command::Serve { root, db } => {
             init_logging("tokenstunt=warn");
 
-            let root = resolve_root(root)?;
-            let cfg = config::Config::load(&root)?;
-            let embedder = load_embedder(&cfg)?;
-            let db_path = resolve_db(db, &root);
+            let ctx = init_context(root, db)?;
+            let indexer = Arc::new(tokenstunt_index::Indexer::new(ctx.store, ctx.embedder)?);
 
-            if let Some(parent) = db_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
+            let progress = output::IndicatifProgress::new();
+            let stats = indexer.index_directory(&ctx.root, &progress)?;
+            indexer.await_embeddings().await;
 
-            let store = tokenstunt_store::Store::open(&db_path)?;
-            let indexer = Arc::new(tokenstunt_index::Indexer::new(store, embedder)?);
-
-            info!(root = %root.display(), db = %db_path.display(), "indexing");
-            let stats = indexer.index_directory(&root)?;
-            info!(
-                files = stats.files,
-                blocks = stats.blocks,
-                skipped = stats.skipped,
-                "index ready"
-            );
-
-            let root_str = root.to_str().context("non-UTF-8 path")?;
-            let repo_name = root
+            let root_str = ctx.root.to_str().context("non-UTF-8 path")?;
+            let repo_name = ctx
+                .root
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("unknown");
             let repo_id = indexer.store().ensure_repo(root_str, repo_name)?;
-            let reconcile_stats = indexer.reconcile(&root, repo_id)?;
+            let reconcile_stats = indexer.reconcile(&ctx.root, repo_id)?;
             info!(
                 updated = reconcile_stats.updated,
                 unchanged = reconcile_stats.unchanged,
@@ -133,13 +153,19 @@ async fn main() -> Result<()> {
                 "reconciliation complete"
             );
 
-            let _watcher = tokenstunt_index::FileWatcher::start(Arc::clone(&indexer), root.clone())?;
-            info!("file watcher started");
+            let _watcher =
+                tokenstunt_index::FileWatcher::start(Arc::clone(&indexer), ctx.root.clone())?;
 
             let has_embeddings = indexer.embedder().is_some();
-            let server = tokenstunt_server::TokenStuntServer::new(Arc::clone(&indexer), root, has_embeddings);
 
-            info!("starting MCP server on stdio");
+            output::print_serve_banner(&ctx.root, stats.files, stats.blocks, true);
+
+            let server = tokenstunt_server::TokenStuntServer::new(
+                Arc::clone(&indexer),
+                ctx.root,
+                has_embeddings,
+            );
+
             let transport = rmcp::transport::io::stdio();
             let service = server
                 .serve(transport)
@@ -154,46 +180,46 @@ async fn main() -> Result<()> {
         Command::Index { root, db } => {
             init_logging("tokenstunt=info");
 
-            let root = resolve_root(root)?;
-            let cfg = config::Config::load(&root)?;
-            let embedder = load_embedder(&cfg)?;
-            let db_path = resolve_db(db, &root);
+            let ctx = init_context(root, db)?;
+            let has_embeddings = ctx.embedder.is_some();
+            let indexer = tokenstunt_index::Indexer::new(ctx.store, ctx.embedder)?;
 
-            if let Some(parent) = db_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
+            let progress = output::IndicatifProgress::new();
+            let stats = indexer.index_directory(&ctx.root, &progress)?;
+            indexer.await_embeddings().await;
 
-            let store = tokenstunt_store::Store::open(&db_path)?;
-            let indexer = tokenstunt_index::Indexer::new(store, embedder)?;
-
-            info!(root = %root.display(), "indexing");
-            let stats = indexer.index_directory(&root)?;
-
-            println!(
-                "Indexed {} files, {} code blocks ({} skipped, {} errors)",
-                stats.files, stats.blocks, stats.skipped, stats.errors
+            output::print_index_summary(
+                stats.files,
+                stats.blocks,
+                stats.skipped,
+                stats.deleted_files,
+                stats.errors,
             );
+
+            if has_embeddings {
+                let emb_count = indexer.store().embedding_count()?.max(0) as u64;
+                let block_count = indexer.store().block_count()?.max(0) as u64;
+                output::print_embed_summary(emb_count, block_count);
+            }
 
             Ok(())
         }
 
         Command::Status { db } => {
             let root = resolve_root(None)?;
-            let db_path = resolve_db(db, &root);
+            let db_path = resolve_db(db, &root)?;
 
             if !db_path.exists() {
-                println!("No index found at {}", db_path.display());
-                println!("Run `tokenstunt index` to create one.");
+                eprintln!("No index found at {}", db_path.display());
+                eprintln!("Run `tokenstunt index` to create one.");
                 return Ok(());
             }
 
             let store = tokenstunt_store::Store::open(&db_path)?;
-            let files = store.file_count()?;
-            let blocks = store.block_count()?;
+            let files = store.file_count()?.max(0) as u64;
+            let blocks = store.block_count()?.max(0) as u64;
 
-            println!("Index: {}", db_path.display());
-            println!("Files: {files}");
-            println!("Code blocks: {blocks}");
+            output::print_status(&db_path, files, blocks);
 
             Ok(())
         }

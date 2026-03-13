@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -120,6 +120,7 @@ impl LanguageRegistry {
             Language::Kotlin => Ok(self.ts_kotlin.clone()),
             #[cfg(feature = "lang-dart")]
             Language::Dart => Ok(self.ts_dart.clone()),
+            #[allow(unreachable_patterns)]
             other => bail!("language {:?} not yet supported", other),
         }
     }
