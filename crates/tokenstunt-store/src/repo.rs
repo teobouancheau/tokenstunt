@@ -25,6 +25,7 @@ impl Store {
         read_conn.execute_batch("PRAGMA journal_mode = WAL;")?;
         read_conn.execute_batch("PRAGMA synchronous = NORMAL;")?;
         read_conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        read_conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
         Ok(Self {
             read_conn: Mutex::new(read_conn),
             write_conn: Mutex::new(write_conn),
@@ -453,6 +454,19 @@ impl Store {
         let count: i64 =
             conn.query_row("SELECT COUNT(*) FROM code_blocks", [], |row| row.get(0))?;
         Ok(count)
+    }
+
+    pub fn delete_file_by_path_with_conn(
+        &self,
+        conn: &Connection,
+        repo_id: i64,
+        path: &str,
+    ) -> Result<bool> {
+        let deleted = conn.execute(
+            "DELETE FROM files WHERE repo_id = ?1 AND path = ?2",
+            params![repo_id, path],
+        )?;
+        Ok(deleted > 0)
     }
 
     pub fn delete_stale_files(&self, repo_id: i64, current_paths: &[String]) -> Result<u64> {

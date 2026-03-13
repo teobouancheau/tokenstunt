@@ -6,7 +6,7 @@ If you discover a security vulnerability, please report it responsibly.
 
 **Do not open a public issue.**
 
-Instead, email **teo@bouancheau.com** with:
+Instead, email **teo@stellarwind.io** with:
 
 - Description of the vulnerability
 - Steps to reproduce
@@ -18,7 +18,7 @@ You will receive a response within 48 hours. We will work with you to understand
 
 | Version | Supported |
 | ------- | --------- |
-| 1.x     | Yes       |
+| 202x.xxx.x     | Yes       |
 
 ## Scope
 

@@ -181,9 +181,16 @@ fn embed_sync(embedder: &dyn EmbeddingProvider, text: &str) -> Result<Vec<f32>> 
         .ok_or_else(|| anyhow::anyhow!("embedding returned no results"))
 }
 
+fn sanitize_fts_term(term: &str) -> String {
+    term.chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_')
+        .collect()
+}
+
 fn build_fts_query(input: &str) -> String {
     let terms: Vec<String> = input
         .split_whitespace()
+        .map(sanitize_fts_term)
         .filter(|t| !t.is_empty())
         .map(|t| format!("{t}*"))
         .collect();
@@ -244,6 +251,28 @@ mod tests {
         );
         assert_eq!(build_fts_query("single"), "single*");
         assert_eq!(build_fts_query(""), "");
+    }
+
+    #[test]
+    fn test_build_fts_query_special_chars() {
+        assert_eq!(build_fts_query("foo(bar)"), "foobar*");
+        assert_eq!(build_fts_query("\"hello\""), "hello*");
+        assert_eq!(build_fts_query("a-b"), "ab*");
+        assert_eq!(build_fts_query("user_name"), "user_name*");
+        assert_eq!(build_fts_query("()"), "");
+    }
+
+    #[test]
+    fn test_search_special_chars_no_crash() {
+        let store = setup_store();
+        let engine = SearchEngine::new(&store);
+        let query = SearchQuery {
+            text: "foo(bar) \"baz\"".to_string(),
+            limit: 10,
+            ..Default::default()
+        };
+        let results = engine.search(&query);
+        assert!(results.is_ok());
     }
 
     #[test]

@@ -46,12 +46,6 @@ pub fn build_setup_report(store: &Store, root: &Path, has_embeddings: bool) -> R
     out.push('\n');
     if has_embeddings {
         let emb_count = store.embedding_count()?;
-        let coverage = if block_count > 0 {
-            (emb_count as f64 / block_count as f64 * 100.0) as u32
-        } else {
-            0
-        };
-        let status_label = format!("Configured");
         let items = vec![render::TreeItem {
             label: format!(
                 "Coverage  {}",
@@ -60,11 +54,10 @@ pub fn build_setup_report(store: &Store, root: &Path, has_embeddings: bool) -> R
         }];
         out.push_str(&format!(
             "  \u{25C7} Embeddings{:>width$}\n  \u{2502}\n",
-            status_label,
+            "Configured",
             width = 24
         ));
         out.push_str(&render::render_list(&items));
-        let _ = coverage;
     } else {
         out.push_str("  \u{25C7} Embeddings              Not configured\n");
         out.push('\n');

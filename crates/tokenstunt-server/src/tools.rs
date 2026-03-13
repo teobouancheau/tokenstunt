@@ -56,8 +56,6 @@ struct TsContextParams {
 struct TsOverviewParams {
     /// Scope to a directory path (e.g. "src/")
     scope: Option<String>,
-    /// Directory depth for module tree (default: 1)
-    depth: Option<i32>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -93,6 +91,7 @@ impl TokenStuntServer {
         let p = params.0;
         let engine = SearchEngine::new(self.indexer.store());
 
+        let query_text = p.query.clone();
         let query = SearchQuery {
             text: p.query,
             scope: p.scope,
@@ -116,7 +115,7 @@ impl TokenStuntServer {
             .map(|r| (r.block.clone(), Some(r.score)))
             .collect();
 
-        let output = format::format_blocks(&blocks);
+        let output = format::format_blocks(&query_text, &blocks);
         Ok(CallToolResult::success(vec![Content::text(output)]))
     }
 
@@ -203,7 +202,7 @@ impl TokenStuntServer {
                                 render::kind_label(&block.kind),
                                 block.name,
                                 dep_loc,
-                                capitalize(kind),
+                                render::capitalize(kind),
                             ),
                         }
                     })
@@ -234,7 +233,7 @@ impl TokenStuntServer {
                                 render::kind_label(&block.kind),
                                 block.name,
                                 dep_loc,
-                                capitalize(kind),
+                                render::capitalize(kind),
                             ),
                         }
                     })
@@ -260,19 +259,18 @@ impl TokenStuntServer {
         let p = params.0;
         let store = self.indexer.store();
         let scope = p.scope.as_deref().unwrap_or("");
-        let depth = p.depth.unwrap_or(1);
 
         if let Some(cached) = store
-            .get_overview_cache(scope, depth)
+            .get_overview_cache(scope, 1)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?
         {
             return Ok(CallToolResult::success(vec![Content::text(cached)]));
         }
 
-        let output = build_overview(store, &self.root, scope, depth)
+        let output = build_overview(store, &self.root, scope)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        let _ = store.set_overview_cache(scope, depth, &output);
+        let _ = store.set_overview_cache(scope, 1, &output);
 
         Ok(CallToolResult::success(vec![Content::text(output)]))
     }
@@ -309,21 +307,12 @@ impl TokenStuntServer {
     }
 }
 
-fn capitalize(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
-    }
-}
-
 const ENTRY_POINT_PREFIXES: &[&str] = &["main.", "index.", "app.", "mod.", "lib."];
 
 fn build_overview(
     store: &tokenstunt_store::Store,
     root: &std::path::Path,
     scope: &str,
-    _depth: i32,
 ) -> anyhow::Result<String> {
     let file_count = store.file_count()?;
     let block_count = store.block_count()?;
@@ -653,7 +642,6 @@ mod tests {
         let server = setup_server();
         let params = Parameters(TsOverviewParams {
             scope: None,
-            depth: None,
         });
         let result = server.ts_overview(params).await.unwrap();
         let text = text_content(&result);
@@ -684,13 +672,11 @@ mod tests {
 
         let params = Parameters(TsOverviewParams {
             scope: None,
-            depth: None,
         });
         let first = text_content(&server.ts_overview(params).await.unwrap());
 
         let params = Parameters(TsOverviewParams {
             scope: None,
-            depth: None,
         });
         let second = text_content(&server.ts_overview(params).await.unwrap());
         assert_eq!(first, second);

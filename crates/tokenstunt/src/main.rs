@@ -189,8 +189,8 @@ async fn main() -> Result<()> {
             );
 
             if has_embeddings {
-                let emb_count = indexer.store().embedding_count()?;
-                let block_count = indexer.store().block_count()?;
+                let emb_count = indexer.store().embedding_count()?.max(0) as u64;
+                let block_count = indexer.store().block_count()?.max(0) as u64;
                 output::print_embed_summary(emb_count, block_count);
             }
 
@@ -208,8 +208,8 @@ async fn main() -> Result<()> {
             }
 
             let store = tokenstunt_store::Store::open(&db_path)?;
-            let files = store.file_count()?;
-            let blocks = store.block_count()?;
+            let files = store.file_count()?.max(0) as u64;
+            let blocks = store.block_count()?.max(0) as u64;
 
             output::print_status(&db_path, files, blocks);
 
