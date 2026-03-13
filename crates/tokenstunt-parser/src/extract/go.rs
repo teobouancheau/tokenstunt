@@ -1,7 +1,9 @@
 use tree_sitter::Node;
 
-use super::helpers::{child_text_by_field, node_text};
+use super::helpers::{child_text_by_field, extract_preceding_comments, node_text};
 use super::{LanguageExtractor, ParsedSymbol, RawReference};
+
+const COMMENT_KINDS: &[&str] = &["comment"];
 
 pub(crate) struct GoExtractor;
 
@@ -57,6 +59,7 @@ fn extract_function(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
     let name = child_text_by_field(node, "name", source)?;
     let content = node_text(node, source);
     let signature = extract_first_line(&content);
+    let docstring = extract_preceding_comments(node, source, COMMENT_KINDS);
 
     Some(ParsedSymbol {
         name,
@@ -65,6 +68,7 @@ fn extract_function(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
         end_line: node.end_position().row as u32 + 1,
         content,
         signature,
+        docstring,
         children: vec![],
     })
 }
@@ -72,6 +76,7 @@ fn extract_function(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
 fn extract_method(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
     let name = child_text_by_field(node, "name", source)?;
     let content = node_text(node, source);
+    let docstring = extract_preceding_comments(node, source, COMMENT_KINDS);
 
     let receiver = node
         .child_by_field_name("receiver")
@@ -87,6 +92,7 @@ fn extract_method(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
         end_line: node.end_position().row as u32 + 1,
         content,
         signature,
+        docstring,
         children: vec![],
     })
 }
@@ -126,6 +132,8 @@ fn extract_type_declaration(node: Node<'_>, source: &[u8], out: &mut Vec<ParsedS
             }
         };
 
+        let docstring = extract_preceding_comments(node, source, COMMENT_KINDS);
+
         out.push(ParsedSymbol {
             name,
             kind,
@@ -133,6 +141,7 @@ fn extract_type_declaration(node: Node<'_>, source: &[u8], out: &mut Vec<ParsedS
             end_line: child.end_position().row as u32 + 1,
             content,
             signature,
+            docstring,
             children,
         });
     }
@@ -154,6 +163,7 @@ fn extract_interface_methods(iface_node: Node<'_>, source: &[u8]) -> Vec<ParsedS
 
         let content = node_text(child, source);
 
+        let method_doc = extract_preceding_comments(child, source, COMMENT_KINDS);
         methods.push(ParsedSymbol {
             name,
             kind: "method",
@@ -161,6 +171,7 @@ fn extract_interface_methods(iface_node: Node<'_>, source: &[u8]) -> Vec<ParsedS
             end_line: child.end_position().row as u32 + 1,
             content: content.clone(),
             signature: content,
+            docstring: method_doc,
             children: vec![],
         });
     }
@@ -194,6 +205,7 @@ fn extract_const_or_var(node: Node<'_>, source: &[u8], out: &mut Vec<ParsedSymbo
         let content = node_text(child, source);
         let signature = content.clone();
 
+        let docstring = extract_preceding_comments(node, source, COMMENT_KINDS);
         out.push(ParsedSymbol {
             name,
             kind: "constant",
@@ -201,6 +213,7 @@ fn extract_const_or_var(node: Node<'_>, source: &[u8], out: &mut Vec<ParsedSymbo
             end_line: child.end_position().row as u32 + 1,
             content,
             signature,
+            docstring,
             children: vec![],
         });
     }

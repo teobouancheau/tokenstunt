@@ -302,6 +302,194 @@ mod tests {
     }
 
     #[test]
+    fn test_dim_and_bold_styles() {
+        let d = dim();
+        let b = bold();
+        // Verify they produce styled output without panicking
+        let _ = d.apply_to("test");
+        let _ = b.apply_to("test");
+    }
+
+    #[test]
+    fn test_indicatif_progress_full_lifecycle() {
+        let progress = IndicatifProgress::new();
+
+        // Bar should start as None
+        {
+            let lock = progress.bar.lock().unwrap();
+            assert!(lock.is_none());
+        }
+
+        // Discover creates the bar
+        progress.on_discover(10);
+        {
+            let lock = progress.bar.lock().unwrap();
+            assert!(lock.is_some());
+        }
+
+        // Index a file
+        progress.on_file_indexed("src/main.rs");
+        {
+            let lock = progress.bar.lock().unwrap();
+            let pb = lock.as_ref().unwrap();
+            assert_eq!(pb.position(), 1);
+        }
+
+        // Skip a file
+        progress.on_file_skipped("src/skip.rs");
+        {
+            let lock = progress.bar.lock().unwrap();
+            let pb = lock.as_ref().unwrap();
+            assert_eq!(pb.position(), 2);
+        }
+
+        // Error on a file
+        progress.on_file_error("src/bad.rs", "parse error");
+        {
+            let lock = progress.bar.lock().unwrap();
+            let pb = lock.as_ref().unwrap();
+            assert_eq!(pb.position(), 3);
+        }
+
+        // Complete
+        progress.on_complete(1, 5, 1, 1);
+        {
+            let lock = progress.bar.lock().unwrap();
+            let pb = lock.as_ref().unwrap();
+            assert!(pb.is_finished());
+        }
+    }
+
+    #[test]
+    fn test_indicatif_progress_methods_before_discover() {
+        let progress = IndicatifProgress::new();
+        // All methods should be no-ops before on_discover
+        progress.on_file_indexed("src/main.rs");
+        progress.on_file_skipped("src/skip.rs");
+        progress.on_file_error("src/bad.rs", "err");
+        progress.on_complete(0, 0, 0, 0);
+    }
+
+    #[test]
+    fn test_print_index_summary_no_extras() {
+        print_index_summary(10, 50, 0, 0, 0);
+    }
+
+    #[test]
+    fn test_print_index_summary_with_skipped() {
+        print_index_summary(10, 50, 3, 0, 0);
+    }
+
+    #[test]
+    fn test_print_index_summary_with_deleted() {
+        print_index_summary(10, 50, 0, 2, 0);
+    }
+
+    #[test]
+    fn test_print_index_summary_with_errors() {
+        print_index_summary(10, 50, 0, 0, 5);
+    }
+
+    #[test]
+    fn test_print_index_summary_all_branches() {
+        print_index_summary(100, 500, 20, 3, 7);
+    }
+
+    #[test]
+    fn test_print_embed_summary() {
+        print_embed_summary(100, 200);
+    }
+
+    #[test]
+    fn test_print_embed_summary_zero_blocks() {
+        print_embed_summary(0, 0);
+    }
+
+    #[test]
+    fn test_print_status() {
+        let path = std::path::PathBuf::from("/tmp/tokenstunt/myproject-abc123/index.db");
+        print_status(&path, 42, 128);
+    }
+
+    #[test]
+    fn test_print_serve_banner_with_watcher() {
+        let root = std::path::PathBuf::from("/tmp/test-project");
+        print_serve_banner(&root, 10, 50, true);
+    }
+
+    #[test]
+    fn test_print_serve_banner_without_watcher() {
+        let root = std::path::PathBuf::from("/tmp/test-project");
+        print_serve_banner(&root, 10, 50, false);
+    }
+
+    #[test]
+    fn test_truncate_path_short() {
+        assert_eq!(truncate_path("src/main.rs", 40), "src/main.rs");
+    }
+
+    #[test]
+    fn test_truncate_path_exact_length() {
+        let path = "a".repeat(40);
+        assert_eq!(truncate_path(&path, 40), path);
+    }
+
+    #[test]
+    fn test_truncate_path_longer() {
+        let path = "a".repeat(50);
+        let result = truncate_path(&path, 40);
+        assert!(result.starts_with("..."));
+        assert_eq!(result.chars().count(), 40);
+    }
+
+    #[test]
+    fn test_truncate_path_very_short_max() {
+        let result = truncate_path("hello/world/test.rs", 5);
+        assert_eq!(result.chars().count(), 5);
+        assert!(result.starts_with("..."));
+    }
+
+    #[test]
+    fn test_embedding_progress_poisoned_mutex_on_start() {
+        use std::sync::Arc;
+        use tokenstunt_index::EmbeddingProgress;
+
+        let progress = Arc::new(IndicatifEmbeddingProgress::new());
+        let progress_clone = Arc::clone(&progress);
+
+        // Poison the mutex by panicking while holding the lock
+        let _ = std::thread::spawn(move || {
+            let _lock = progress_clone.bar.lock().unwrap();
+            panic!("intentional panic to poison mutex");
+        })
+        .join();
+
+        // on_start should silently handle the poisoned mutex (if-let Err path)
+        progress.on_start(10);
+    }
+
+    #[test]
+    fn test_on_batch_complete_before_on_start() {
+        use tokenstunt_index::EmbeddingProgress;
+
+        let progress = IndicatifEmbeddingProgress::new();
+
+        // Should be no-op, not panic
+        progress.on_batch_complete(5);
+        {
+            let lock = progress.bar.lock().unwrap();
+            assert!(lock.is_none(), "bar should not exist before on_start");
+        }
+
+        // Should be no-op, not panic
+        progress.on_complete(0);
+        {
+            let lock = progress.bar.lock().unwrap();
+            assert!(lock.is_none(), "bar should not exist before on_start");
+        }
+    }
+
+    #[test]
     fn test_embedding_progress_accumulates_on_multiple_starts() {
         use tokenstunt_index::EmbeddingProgress;
 

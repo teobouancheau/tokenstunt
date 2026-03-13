@@ -17,4 +17,6 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokenstunt-embeddings = { path = "../tokenstunt-embeddings" }
+async-trait = "0.1"

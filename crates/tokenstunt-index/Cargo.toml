@@ -3,6 +3,11 @@ name = "tokenstunt-index"
 version.workspace = true
 edition.workspace = true
 
+[features]
+lang-swift = ["tokenstunt-parser/lang-swift"]
+lang-kotlin = ["tokenstunt-parser/lang-kotlin"]
+lang-dart = ["tokenstunt-parser/lang-dart"]
+
 [dependencies]
 tokenstunt-store = { path = "../tokenstunt-store" }
 tokenstunt-parser = { path = "../tokenstunt-parser" }
@@ -19,3 +24,5 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [dev-dependencies]
 tempfile = "3"
+async-trait = "0.1"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

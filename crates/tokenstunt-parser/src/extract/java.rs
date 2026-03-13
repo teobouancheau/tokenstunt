@@ -1,7 +1,9 @@
 use tree_sitter::Node;
 
-use super::helpers::{child_text_by_field, node_text};
+use super::helpers::{child_text_by_field, extract_preceding_comments, node_text};
 use super::{LanguageExtractor, ParsedSymbol, RawReference};
+
+const COMMENT_KINDS: &[&str] = &["block_comment", "line_comment"];
 
 pub(crate) struct JavaExtractor;
 
@@ -101,6 +103,7 @@ fn extract_class(node: Node<'_>, source: &[u8], out: &mut Vec<ParsedSymbol>) {
     };
     let content = node_text(node, source);
     let signature = extract_first_line(&content);
+    let docstring = extract_preceding_comments(node, source, COMMENT_KINDS);
 
     let body = match node.child_by_field_name("body") {
         Some(b) => b,
@@ -116,6 +119,7 @@ fn extract_class(node: Node<'_>, source: &[u8], out: &mut Vec<ParsedSymbol>) {
         end_line: node.end_position().row as u32 + 1,
         content,
         signature,
+        docstring,
         children: methods,
     });
 
@@ -126,6 +130,7 @@ fn extract_interface(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
     let name = child_text_by_field(node, "name", source)?;
     let content = node_text(node, source);
     let signature = extract_first_line(&content);
+    let docstring = extract_preceding_comments(node, source, COMMENT_KINDS);
 
     let body = node.child_by_field_name("body")?;
     let (methods, _) = extract_class_members(body, source);
@@ -137,6 +142,7 @@ fn extract_interface(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
         end_line: node.end_position().row as u32 + 1,
         content,
         signature,
+        docstring,
         children: methods,
     })
 }
@@ -145,6 +151,7 @@ fn extract_enum(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
     let name = child_text_by_field(node, "name", source)?;
     let content = node_text(node, source);
     let signature = extract_first_line(&content);
+    let docstring = extract_preceding_comments(node, source, COMMENT_KINDS);
 
     Some(ParsedSymbol {
         name,
@@ -153,6 +160,7 @@ fn extract_enum(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
         end_line: node.end_position().row as u32 + 1,
         content,
         signature,
+        docstring,
         children: vec![],
     })
 }
@@ -161,6 +169,7 @@ fn extract_method(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
     let name = child_text_by_field(node, "name", source)?;
     let content = node_text(node, source);
     let signature = extract_first_line(&content);
+    let docstring = extract_preceding_comments(node, source, COMMENT_KINDS);
 
     Some(ParsedSymbol {
         name,
@@ -169,6 +178,7 @@ fn extract_method(node: Node<'_>, source: &[u8]) -> Option<ParsedSymbol> {
         end_line: node.end_position().row as u32 + 1,
         content,
         signature,
+        docstring,
         children: vec![],
     })
 }
@@ -223,6 +233,7 @@ fn extract_constants(node: Node<'_>, source: &[u8], out: &mut Vec<ParsedSymbol>)
             let content = node_text(node, source);
             let signature = content.clone();
 
+            let docstring = extract_preceding_comments(node, source, COMMENT_KINDS);
             out.push(ParsedSymbol {
                 name,
                 kind: "constant",
@@ -230,6 +241,7 @@ fn extract_constants(node: Node<'_>, source: &[u8], out: &mut Vec<ParsedSymbol>)
                 end_line: node.end_position().row as u32 + 1,
                 content,
                 signature,
+                docstring,
                 children: vec![],
             });
         }

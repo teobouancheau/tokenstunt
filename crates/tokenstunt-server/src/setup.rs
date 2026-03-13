@@ -92,10 +92,22 @@ mod tests {
                 10,
                 "function main() {}",
                 "function main()",
+                "",
                 None,
             )
             .unwrap();
         (store, PathBuf::from("/test"))
+    }
+
+    #[test]
+    fn test_no_files_indexed() {
+        let store = Store::open_in_memory().unwrap();
+        let root = PathBuf::from("/empty-project");
+        let report = build_setup_report(&store, &root, false).unwrap();
+        assert!(report.contains("No files indexed"));
+        assert!(report.contains("tokenstunt index"));
+        assert!(report.contains("Files"));
+        assert!(report.contains("0"));
     }
 
     #[test]
@@ -136,6 +148,7 @@ mod tests {
                 5,
                 "function other() {}",
                 "function other()",
+                "",
                 None,
             )
             .unwrap();

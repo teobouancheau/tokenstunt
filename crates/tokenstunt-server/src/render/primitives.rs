@@ -90,6 +90,45 @@ mod tests {
     }
 
     #[test]
+    fn test_kind_label_all_variants() {
+        let variants = vec![
+            (CodeBlockKind::Function, "Function"),
+            (CodeBlockKind::Method, "Method"),
+            (CodeBlockKind::Class, "Class"),
+            (CodeBlockKind::Struct, "Struct"),
+            (CodeBlockKind::Enum, "Enum"),
+            (CodeBlockKind::Interface, "Interface"),
+            (CodeBlockKind::TypeAlias, "Type"),
+            (CodeBlockKind::Constant, "Constant"),
+            (CodeBlockKind::Variable, "Variable"),
+            (CodeBlockKind::Module, "Module"),
+            (CodeBlockKind::Trait, "Trait"),
+            (CodeBlockKind::Impl, "Impl"),
+        ];
+        for (kind, expected) in variants {
+            let label = kind_label(&kind);
+            assert_eq!(label.trim(), expected);
+            assert_eq!(label.len(), KIND_WIDTH);
+        }
+    }
+
+    #[test]
+    fn test_capitalize_empty() {
+        assert_eq!(capitalize(""), "");
+    }
+
+    #[test]
+    fn test_capitalize_normal() {
+        assert_eq!(capitalize("call"), "Call");
+        assert_eq!(capitalize("import"), "Import");
+    }
+
+    #[test]
+    fn test_capitalize_already_uppercase() {
+        assert_eq!(capitalize("Hello"), "Hello");
+    }
+
+    #[test]
     fn test_notice() {
         assert!(notice("Warning").contains("\u{25C6}"));
     }
