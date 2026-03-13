@@ -125,7 +125,7 @@ pub fn print_index_summary(
     }
 }
 
-pub fn print_embed_summary(emb_count: i64, block_count: i64) {
+pub fn print_embed_summary(emb_count: u64, block_count: u64) {
     let a = accent();
     let b = bold();
     let pct = if block_count > 0 {
@@ -136,13 +136,13 @@ pub fn print_embed_summary(emb_count: i64, block_count: i64) {
     eprintln!(
         "  {}  {}/{} vectors ({}%)",
         a.apply_to("Embeds "),
-        b.apply_to(format_number(emb_count as u64)),
-        format_number(block_count as u64),
+        b.apply_to(format_number(emb_count)),
+        format_number(block_count),
         pct,
     );
 }
 
-pub fn print_status(db_path: &std::path::Path, files: i64, blocks: i64) {
+pub fn print_status(db_path: &std::path::Path, files: u64, blocks: u64) {
     let a = accent();
     let b = bold();
     let d = dim();
@@ -166,12 +166,12 @@ pub fn print_status(db_path: &std::path::Path, files: i64, blocks: i64) {
     eprintln!(
         "  {}  {} indexed",
         a.apply_to("Files "),
-        b.apply_to(format_number(files as u64)),
+        b.apply_to(format_number(files)),
     );
     eprintln!(
         "  {}  {} code blocks",
         a.apply_to("Blocks"),
-        b.apply_to(format_number(blocks as u64)),
+        b.apply_to(format_number(blocks)),
     );
 }
 
@@ -203,10 +203,13 @@ pub fn print_serve_banner(root: &std::path::Path, files: u64, blocks: u64, watch
 }
 
 fn truncate_path(path: &str, max_len: usize) -> String {
-    if path.len() <= max_len {
+    let char_count = path.chars().count();
+    if char_count <= max_len {
         return path.to_string();
     }
-    let suffix = &path[path.len().saturating_sub(max_len.saturating_sub(3))..];
+    let keep = max_len.saturating_sub(3);
+    let skip = char_count - keep;
+    let suffix: String = path.chars().skip(skip).collect();
     format!("...{suffix}")
 }
 
