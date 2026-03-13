@@ -723,10 +723,13 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT cb.id, cb.content
              FROM code_blocks cb
-             LEFT JOIN embeddings e ON e.block_id = cb.id
              WHERE cb.parent_id IS NULL
                AND cb.content != ''
-               AND (e.block_id IS NULL OR (?1 IS NOT NULL AND e.model != ?1))",
+               AND NOT EXISTS (
+                   SELECT 1 FROM embeddings e
+                   WHERE e.block_id = cb.id
+                     AND (?1 IS NULL OR e.model = ?1)
+               )",
         )?;
         let rows = stmt
             .query_map(params![model], |row| {

@@ -96,18 +96,25 @@ impl IndicatifEmbeddingProgress {
 
 impl EmbeddingProgress for IndicatifEmbeddingProgress {
     fn on_start(&self, total_blocks: u64) {
-        let pb = ProgressBar::new(total_blocks);
-        pb.set_style(
-            ProgressStyle::with_template(&format!(
-                " {}  [{{bar:24.{}}}]  {{pos}}/{{len}} blocks",
-                accent().apply_to("Embedding"),
-                ORANGE_256,
-            ))
-            .unwrap()
-            .progress_chars("##-"),
-        );
         if let Ok(mut lock) = self.bar.lock() {
-            *lock = Some(pb);
+            match lock.as_ref() {
+                Some(pb) => {
+                    pb.set_length(pb.length().unwrap_or(0) + total_blocks);
+                }
+                None => {
+                    let pb = ProgressBar::new(total_blocks);
+                    pb.set_style(
+                        ProgressStyle::with_template(&format!(
+                            " {}  [{{bar:24.{}}}]  {{pos}}/{{len}} blocks",
+                            accent().apply_to("Embedding"),
+                            ORANGE_256,
+                        ))
+                        .unwrap()
+                        .progress_chars("##-"),
+                    );
+                    *lock = Some(pb);
+                }
+            }
         }
     }
 
@@ -120,8 +127,10 @@ impl EmbeddingProgress for IndicatifEmbeddingProgress {
     }
 
     fn on_complete(&self, _total: u64) {
+        // Only clear the bar when all work is done (position == length)
         if let Ok(lock) = self.bar.lock()
             && let Some(pb) = lock.as_ref()
+            && pb.position() >= pb.length().unwrap_or(0)
         {
             pb.finish_and_clear();
         }
