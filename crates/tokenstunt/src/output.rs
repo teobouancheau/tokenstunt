@@ -48,46 +48,40 @@ impl IndexProgress for IndicatifProgress {
     }
 
     fn on_file_indexed(&self, path: &str) {
-        if let Ok(lock) = self.bar.lock() {
-            if let Some(pb) = lock.as_ref() {
-                pb.set_message(truncate_path(path, 40));
-                pb.inc(1);
-            }
+        if let Ok(lock) = self.bar.lock()
+            && let Some(pb) = lock.as_ref()
+        {
+            pb.set_message(truncate_path(path, 40));
+            pb.inc(1);
         }
     }
 
     fn on_file_skipped(&self, _path: &str) {
-        if let Ok(lock) = self.bar.lock() {
-            if let Some(pb) = lock.as_ref() {
-                pb.inc(1);
-            }
+        if let Ok(lock) = self.bar.lock()
+            && let Some(pb) = lock.as_ref()
+        {
+            pb.inc(1);
         }
     }
 
     fn on_file_error(&self, _path: &str, _error: &str) {
-        if let Ok(lock) = self.bar.lock() {
-            if let Some(pb) = lock.as_ref() {
-                pb.inc(1);
-            }
+        if let Ok(lock) = self.bar.lock()
+            && let Some(pb) = lock.as_ref()
+        {
+            pb.inc(1);
         }
     }
 
     fn on_complete(&self, _files: u64, _blocks: u64, _skipped: u64, _errors: u64) {
-        if let Ok(lock) = self.bar.lock() {
-            if let Some(pb) = lock.as_ref() {
-                pb.finish_and_clear();
-            }
+        if let Ok(lock) = self.bar.lock()
+            && let Some(pb) = lock.as_ref()
+        {
+            pb.finish_and_clear();
         }
     }
 }
 
-pub fn print_index_summary(
-    files: u64,
-    blocks: u64,
-    skipped: u64,
-    deleted_files: u64,
-    errors: u64,
-) {
+pub fn print_index_summary(files: u64, blocks: u64, skipped: u64, deleted_files: u64, errors: u64) {
     let a = accent();
     let b = bold();
 
@@ -153,11 +147,7 @@ pub fn print_status(db_path: &std::path::Path, files: u64, blocks: u64) {
         .and_then(|n| n.to_str())
         .unwrap_or("unknown");
 
-    eprintln!(
-        "  {}  {}",
-        a.apply_to("Index "),
-        b.apply_to(project_name),
-    );
+    eprintln!("  {}  {}", a.apply_to("Index "), b.apply_to(project_name),);
     eprintln!(
         "  {}  {}",
         d.apply_to("Path  "),
@@ -199,7 +189,11 @@ pub fn print_serve_banner(root: &std::path::Path, files: u64, blocks: u64, watch
     if watcher_active {
         eprintln!("  {}  {}", a.apply_to("Watcher"), g.apply_to("active"));
     }
-    eprintln!("  {}  {}", a.apply_to("MCP    "), g.apply_to("Ready on stdio"));
+    eprintln!(
+        "  {}  {}",
+        a.apply_to("MCP    "),
+        g.apply_to("Ready on stdio")
+    );
 }
 
 fn truncate_path(path: &str, max_len: usize) -> String {

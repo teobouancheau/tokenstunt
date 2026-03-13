@@ -1,11 +1,7 @@
 pub fn bar(ratio: f64, width: usize) -> String {
     let filled = (ratio * width as f64).round() as usize;
     let empty = width.saturating_sub(filled);
-    format!(
-        "{}{}",
-        "\u{2593}".repeat(filled),
-        "\u{2591}".repeat(empty),
-    )
+    format!("{}{}", "\u{2593}".repeat(filled), "\u{2591}".repeat(empty),)
 }
 
 pub fn bar_with_label(current: u64, total: u64, width: usize) -> String {
