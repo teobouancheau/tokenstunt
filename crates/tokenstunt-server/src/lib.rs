@@ -1,5 +1,6 @@
 mod format;
 mod impact;
+mod render;
 mod setup;
 mod tools;
 
