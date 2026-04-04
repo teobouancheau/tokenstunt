@@ -4,7 +4,7 @@ description: Semantic code search by concept or keyword
 argument-hint: <query>
 ---
 
-Search the codebase using the `ts_search` MCP tool with the query "$ARGUMENTS".
+Search the codebase using the `search_code` MCP tool with the query "$ARGUMENTS".
 
 ## How to use
 
@@ -21,12 +21,13 @@ Search the codebase using the `ts_search` MCP tool with the query "$ARGUMENTS".
 
 ## Handling edge cases
 
-- **No results**: Tell the user clearly. Suggest alternative queries (synonyms, broader terms). Suggest `ts_symbol` if the query looks like an exact symbol name.
+- **Index not ready**: If the response says "Index is empty", indexing is still in progress. Wait a moment and retry, or run `/tokenstunt-setup` to check status. Do NOT suggest alternative queries.
+- **No results**: Tell the user clearly. Suggest alternative queries (synonyms, broader terms). Suggest `lookup_symbol` if the query looks like an exact symbol name.
 - **Too many results**: Suggest narrowing with a language filter, scope, or symbol kind.
 
 ## Follow-up suggestions
 
 After showing results, suggest next steps when relevant:
 - `/tokenstunt-symbol <name>` for the exact definition of a specific result
-- `/tokenstunt-context <name>` to see what a result depends on and what depends on it
+- `/tokenstunt-context <name>` to see what a result calls and what calls it
 - `/tokenstunt-impact <name>` before refactoring a result

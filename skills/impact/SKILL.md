@@ -4,7 +4,7 @@ description: Blast radius analysis showing all dependents and affected files
 argument-hint: <symbol>
 ---
 
-Analyze the blast radius of "$ARGUMENTS" using the `ts_impact` MCP tool.
+Analyze the blast radius of "$ARGUMENTS" using the `analyze_impact` MCP tool.
 
 ## How to use
 
@@ -19,7 +19,8 @@ Analyze the blast radius of "$ARGUMENTS" using the `ts_impact` MCP tool.
 
 ## Handling edge cases
 
-- **Not found**: Tell the user clearly. Suggest `/tokenstunt-search <name>` to find the correct symbol name.
+- **Index not ready**: If the response says "Index is empty", indexing is still in progress. Wait a moment and retry, or run `/tokenstunt-setup` to check status.
+- **Symbol not found**: The symbol is not in the index. Suggest `/tokenstunt-search <name>` to find the correct symbol name. Do NOT tell the user the symbol is safe to modify.
 - **No dependents**: This is good news. Tell the user the symbol can be safely modified without affecting other code.
 - **Large blast radius**: Warn the user. Suggest breaking the change into smaller steps or adding an abstraction layer.
 

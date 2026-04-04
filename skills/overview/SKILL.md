@@ -3,12 +3,16 @@ name: tokenstunt-overview
 description: Project structure with module tree, languages, public API, and entry points
 ---
 
-Show the project structure using the `ts_overview` MCP tool.
+Show the project structure using the `show_overview` MCP tool.
 
 ## How to use
 
 - Call with no scope to see the full project.
 - If the user asks about a specific directory (e.g., "show me the src/ structure"), pass it as the scope parameter.
+
+## Handling edge cases
+
+- **Index not ready**: If the response says "Index is empty", indexing is still in progress. Wait a moment and retry, or run `/tokenstunt-setup` to check status.
 
 ## Presenting results
 

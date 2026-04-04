@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
 use tokenstunt_index::{EmbeddingProgress, IndexProgress};
+use tracing::{info, warn};
 
 const ORANGE_256: u8 = 173;
 const LABEL_WIDTH: usize = 12;
@@ -225,41 +226,24 @@ pub fn print_status(db_path: &std::path::Path, files: u64, blocks: u64) {
     );
 }
 
-pub fn print_serve_banner(root: &std::path::Path, files: u64, blocks: u64, watcher_active: bool) {
-    let a = accent();
-    let b = bold();
-    let d = dim();
-    let g = Style::new().green();
+pub struct LogProgress;
 
-    eprintln!(
-        "  {} v{}",
-        a.apply_to("Token Stunt").bold(),
-        env!("CARGO_PKG_VERSION"),
-    );
-    eprintln!(
-        "  {:>LABEL_WIDTH$}  {}",
-        a.apply_to("Root"),
-        d.apply_to(root.display()),
-    );
-    eprintln!(
-        "  {:>LABEL_WIDTH$}  {} files, {} code blocks",
-        a.apply_to("Index"),
-        b.apply_to(format_number(files)),
-        b.apply_to(format_number(blocks)),
-    );
-    if watcher_active {
-        eprintln!(
-            "  {:>LABEL_WIDTH$}  {}",
-            a.apply_to("Watcher"),
-            g.apply_to("active"),
-        );
+impl IndexProgress for LogProgress {
+    fn on_discover(&self, total_files: usize) {
+        info!(total_files, "discovered files");
     }
-    eprintln!(
-        "  {:>LABEL_WIDTH$}  {}",
-        a.apply_to("MCP"),
-        g.apply_to("Ready on stdio"),
-    );
-    eprintln!();
+
+    fn on_file_indexed(&self, _path: &str) {}
+
+    fn on_file_skipped(&self, _path: &str) {}
+
+    fn on_file_error(&self, path: &str, error: &str) {
+        warn!(path, error, "failed to index file");
+    }
+
+    fn on_complete(&self, files: u64, blocks: u64, _skipped: u64, errors: u64) {
+        info!(files, blocks, errors, "indexing complete");
+    }
 }
 
 fn truncate_path(path: &str, max_len: usize) -> String {
@@ -409,18 +393,6 @@ mod tests {
     fn test_print_status() {
         let path = std::path::PathBuf::from("/tmp/tokenstunt/myproject-abc123/index.db");
         print_status(&path, 42, 128);
-    }
-
-    #[test]
-    fn test_print_serve_banner_with_watcher() {
-        let root = std::path::PathBuf::from("/tmp/test-project");
-        print_serve_banner(&root, 10, 50, true);
-    }
-
-    #[test]
-    fn test_print_serve_banner_without_watcher() {
-        let root = std::path::PathBuf::from("/tmp/test-project");
-        print_serve_banner(&root, 10, 50, false);
     }
 
     #[test]

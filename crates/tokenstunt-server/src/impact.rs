@@ -17,6 +17,7 @@ pub struct ImpactNode {
 
 pub struct ImpactResult {
     pub source: String,
+    pub found: bool,
     pub dependents: Vec<ImpactNode>,
     pub affected_files: Vec<String>,
 }
@@ -32,6 +33,7 @@ pub fn walk_dependents(
     if symbols.is_empty() {
         return Ok(ImpactResult {
             source: source.to_string(),
+            found: false,
             dependents: Vec::new(),
             affected_files: Vec::new(),
         });
@@ -79,12 +81,22 @@ pub fn walk_dependents(
 
     Ok(ImpactResult {
         source: source.to_string(),
+        found: true,
         dependents,
         affected_files: affected,
     })
 }
 
 pub fn format_impact(result: &ImpactResult) -> String {
+    if !result.found {
+        let mut out = render::header("Impact", &result.source);
+        out.push_str(&format!(
+            "\n\n  Symbol '{}' not found in index.\n",
+            result.source
+        ));
+        return out;
+    }
+
     if result.dependents.is_empty() {
         let mut out = render::header("Impact", &result.source);
         out.push_str("\n\n  No dependents found. This symbol can be safely modified.\n");
@@ -321,9 +333,31 @@ mod tests {
     }
 
     #[test]
+    fn test_walk_not_found() {
+        let store = Store::open_in_memory().unwrap();
+        let result = walk_dependents(&store, "nonexistent", None).unwrap();
+        assert!(!result.found);
+        assert!(result.dependents.is_empty());
+    }
+
+    #[test]
+    fn test_format_not_found() {
+        let result = ImpactResult {
+            source: "missing".to_string(),
+            found: false,
+            dependents: Vec::new(),
+            affected_files: Vec::new(),
+        };
+        let output = format_impact(&result);
+        assert!(output.contains("not found in index"));
+        assert!(!output.contains("safely modified"));
+    }
+
+    #[test]
     fn test_format_empty() {
         let result = ImpactResult {
             source: "test".to_string(),
+            found: true,
             dependents: Vec::new(),
             affected_files: Vec::new(),
         };
@@ -414,6 +448,7 @@ mod tests {
         // Depth 1 has no nodes, depth 2 has nodes -> tests the `continue` on empty nodes
         let result = ImpactResult {
             source: "root".to_string(),
+            found: true,
             dependents: vec![ImpactNode {
                 name: "deep".to_string(),
                 kind: CodeBlockKind::Function,
@@ -435,6 +470,7 @@ mod tests {
     fn test_format_grouped() {
         let result = ImpactResult {
             source: "funcA".to_string(),
+            found: true,
             dependents: vec![
                 ImpactNode {
                     name: "funcB".to_string(),

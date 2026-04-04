@@ -3,7 +3,7 @@ name: tokenstunt-setup
 description: Project diagnostics with index health, languages, and embeddings status
 ---
 
-Show project diagnostics using the `ts_setup` MCP tool.
+Show project diagnostics using the `run_diagnostics` MCP tool.
 
 ## Presenting results
 

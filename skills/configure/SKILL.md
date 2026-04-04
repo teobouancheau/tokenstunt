@@ -83,4 +83,4 @@ Write `~/.cache/tokenstunt/<project>/config.toml` with the detected values. Show
 
 ## Step 6: Verify
 
-Run `ts_setup` to confirm the embeddings are configured and healthy. If coverage is 0%, tell the user the server will start embedding code blocks automatically.
+Run `run_diagnostics` to confirm the embeddings are configured and healthy. If coverage is 0%, tell the user the server will start embedding code blocks automatically.
