@@ -290,27 +290,35 @@ async fn main() -> Result<()> {
                 .await
                 .context("failed to start MCP server")?;
 
-            // Index in background on a dedicated blocking thread so we don't
-            // starve the async MCP transport. index_directory does synchronous
-            // filesystem I/O, tree-sitter parsing, and SQLite writes.
+            // Phase 1: heavy sync work (file walks, parsing, SQLite writes) on
+            // the dedicated blocking thread pool so it can't starve async I/O.
             let bg_indexer = Arc::clone(&indexer);
             let bg_root = ctx.root;
-            let async_handle = tokio::runtime::Handle::current();
-            let bg_handle = tokio::task::spawn_blocking(move || {
-                bg_indexer.set_index_state(tokenstunt_index::INDEX_STATE_RUNNING);
-                let progress = output::LogProgress;
-                match bg_indexer.index_directory(&bg_root, &progress) {
-                    Ok(stats) => {
+            let index_handle = tokio::task::spawn_blocking({
+                let indexer = Arc::clone(&bg_indexer);
+                let root = bg_root.clone();
+                move || {
+                    indexer.set_index_state(tokenstunt_index::INDEX_STATE_RUNNING);
+                    let progress = output::LogProgress;
+                    indexer.index_directory(&root, &progress)
+                }
+            });
+
+            // Phase 2: async orchestration. await_embeddings is async (awaits
+            // JoinHandles), so it runs natively here with no block_on bridge.
+            let bg_handle = tokio::spawn(async move {
+                match index_handle.await {
+                    Ok(Ok(stats)) => {
                         info!(
                             files = stats.files,
                             blocks = stats.blocks,
                             "indexing complete"
                         );
-                        async_handle.block_on(bg_indexer.await_embeddings());
+                        bg_indexer.await_embeddings().await;
 
                         let backfilled = bg_indexer.backfill_embeddings().unwrap_or(0);
                         if backfilled > 0 {
-                            async_handle.block_on(bg_indexer.await_embeddings());
+                            bg_indexer.await_embeddings().await;
                         }
 
                         let Some(root_str) = bg_root.to_str() else {
@@ -339,8 +347,13 @@ async fn main() -> Result<()> {
 
                         bg_indexer.set_index_state(tokenstunt_index::INDEX_STATE_READY);
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         warn!(error = %e, "background indexing failed");
+                        bg_indexer.set_last_error(e.to_string());
+                        bg_indexer.set_index_state(tokenstunt_index::INDEX_STATE_FAILED);
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "background indexing task panicked");
                         bg_indexer.set_last_error(e.to_string());
                         bg_indexer.set_index_state(tokenstunt_index::INDEX_STATE_FAILED);
                     }
