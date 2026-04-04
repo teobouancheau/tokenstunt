@@ -489,27 +489,23 @@ impl Store {
             return Ok(0);
         }
 
-        let placeholders: String = current_paths
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format!("?{}", i + 2))
-            .collect::<Vec<_>>()
-            .join(",");
+        // Use a temp table to avoid SQLite's 999-parameter limit on large repos.
+        conn.execute_batch("CREATE TEMP TABLE IF NOT EXISTS _keep_paths (path TEXT PRIMARY KEY)")?;
+        conn.execute("DELETE FROM _keep_paths", [])?;
 
-        let sql = format!(
-            "DELETE FROM files WHERE repo_id = ?1 AND path NOT IN ({})",
-            placeholders
-        );
-
-        let mut stmt = conn.prepare(&sql)?;
-        let mut param_idx = 1;
-        stmt.raw_bind_parameter(param_idx, repo_id)?;
+        let mut insert = conn.prepare("INSERT OR IGNORE INTO _keep_paths (path) VALUES (?1)")?;
         for path in current_paths {
-            param_idx += 1;
-            stmt.raw_bind_parameter(param_idx, path.as_str())?;
+            insert.execute([path.as_str()])?;
         }
+        drop(insert);
 
-        let deleted = stmt.raw_execute()?;
+        let deleted = conn.execute(
+            "DELETE FROM files WHERE repo_id = ?1 AND path NOT IN (SELECT path FROM _keep_paths)",
+            [repo_id],
+        )?;
+
+        conn.execute("DELETE FROM _keep_paths", [])?;
+
         Ok(deleted as u64)
     }
 
@@ -782,25 +778,31 @@ impl Store {
             return Ok(Vec::new());
         }
         let conn = self.read_lock()?;
-        let placeholders: String = block_ids
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format!("?{}", i + 1))
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql =
-            format!("SELECT block_id, vector FROM embeddings WHERE block_id IN ({placeholders})");
-        let mut stmt = conn.prepare(&sql)?;
-        for (i, id) in block_ids.iter().enumerate() {
-            stmt.raw_bind_parameter(i + 1, *id)?;
-        }
-        let mut rows = stmt.raw_query();
         let mut results = Vec::new();
-        while let Some(row) = rows.next()? {
-            let block_id: i64 = row.get(0)?;
-            let blob: Vec<u8> = row.get(1)?;
-            results.push((block_id, blob_to_vector(&blob)));
+
+        // Chunk to stay within SQLite's 999-parameter limit
+        for chunk in block_ids.chunks(900) {
+            let placeholders: String = chunk
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", i + 1))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT block_id, vector FROM embeddings WHERE block_id IN ({placeholders})"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            for (i, id) in chunk.iter().enumerate() {
+                stmt.raw_bind_parameter(i + 1, *id)?;
+            }
+            let mut rows = stmt.raw_query();
+            while let Some(row) = rows.next()? {
+                let block_id: i64 = row.get(0)?;
+                let blob: Vec<u8> = row.get(1)?;
+                results.push((block_id, blob_to_vector(&blob)));
+            }
         }
+
         Ok(results)
     }
 

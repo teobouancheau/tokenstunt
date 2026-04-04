@@ -9,6 +9,7 @@ use serde::Deserialize;
 use tokenstunt_index::Indexer;
 use tokenstunt_search::{SearchEngine, SearchQuery};
 use tokenstunt_store::CodeBlockKind;
+use tracing::warn;
 
 use crate::format;
 use crate::render;
@@ -405,7 +406,9 @@ impl TokenStuntServer {
         let output = build_overview(store, &self.root, scope)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-        let _ = store.set_overview_cache(scope, 1, &output);
+        if let Err(e) = store.set_overview_cache(scope, 1, &output) {
+            warn!(error = %e, "failed to cache overview");
+        }
 
         Ok(CallToolResult::success(vec![Content::text(output)]))
     }

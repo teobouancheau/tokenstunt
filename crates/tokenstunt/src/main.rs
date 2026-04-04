@@ -313,7 +313,11 @@ async fn main() -> Result<()> {
                             async_handle.block_on(bg_indexer.await_embeddings());
                         }
 
-                        let root_str = bg_root.to_str().unwrap_or("");
+                        let Some(root_str) = bg_root.to_str() else {
+                            warn!("non-UTF-8 root path, skipping reconciliation");
+                            bg_indexer.set_index_state(tokenstunt_index::INDEX_STATE_READY);
+                            return;
+                        };
                         let repo_name = resolve_repo_name(&bg_root);
                         if let Ok(repo_id) = bg_indexer.store().ensure_repo(root_str, repo_name) {
                             match bg_indexer.reconcile(&bg_root, repo_id) {
