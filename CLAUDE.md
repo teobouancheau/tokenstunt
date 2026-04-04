@@ -11,7 +11,7 @@
 ## Architecture
 Cargo workspace, 7 crates:
 - `tokenstunt` — CLI binary (clap), config loading
-- `tokenstunt-server` — MCP server (rmcp, stdio), 6 tools: `search_code`, `lookup_symbol`, `show_context`, `show_overview`, `run_diagnostics`, `analyze_impact`
+- `tokenstunt-server` — MCP server (rmcp, stdio), 8 tools: `search_code`, `lookup_symbol`, `show_context`, `show_overview`, `run_diagnostics`, `analyze_impact`, `list_file_symbols`, `find_usages`
 - `tokenstunt-index` — indexer orchestrator, file walker, file watcher (notify), startup reconciliation
 - `tokenstunt-search` — BM25 keyword search + optional hybrid cosine ranking
 - `tokenstunt-parser` — tree-sitter AST extraction, `LanguageExtractor` trait, per-language modules in `extract/`

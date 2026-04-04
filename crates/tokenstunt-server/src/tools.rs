@@ -456,6 +456,9 @@ impl TokenStuntServer {
         &self,
         params: Parameters<TsFileParams>,
     ) -> Result<CallToolResult, McpError> {
+        if let Some(msg) = self.check_index_health()? {
+            return Ok(CallToolResult::success(vec![Content::text(msg)]));
+        }
         let p = params.0;
         let store = self.indexer.store();
 
@@ -481,6 +484,9 @@ impl TokenStuntServer {
         &self,
         params: Parameters<TsUsagesParams>,
     ) -> Result<CallToolResult, McpError> {
+        if let Some(msg) = self.check_index_health()? {
+            return Ok(CallToolResult::success(vec![Content::text(msg)]));
+        }
         let p = params.0;
         let store = self.indexer.store();
         let limit = p.limit.unwrap_or(20);
@@ -627,7 +633,10 @@ impl rmcp::handler::server::ServerHandler for TokenStuntServer {
                  \n\
                  Workflow: show_overview -> search_code -> lookup_symbol -> show_context/analyze_impact -> Read (only for files you will edit).\n\
                  \n\
-                 Use search_code instead of Grep+Read for any code lookup. Use Read only for files you intend to modify."
+                 Use search_code instead of Grep+Read for any code lookup. \
+                 Use list_file_symbols instead of Read to understand a file's structure. \
+                 Use find_usages to find all call sites of a symbol. \
+                 Use Read only for files you intend to modify."
             )
     }
 }
@@ -1375,6 +1384,31 @@ mod tests {
             max_depth: None,
         });
         let result = server.analyze_impact(params).await.unwrap();
+        let text = text_content(&result);
+        assert!(text.contains("Index is empty"));
+    }
+
+    #[tokio::test]
+    async fn test_list_file_symbols_empty_index() {
+        let server = setup_empty_server();
+        let params = Parameters(TsFileParams {
+            path: "src/main.ts".to_string(),
+            kind: None,
+        });
+        let result = server.list_file_symbols(params).await.unwrap();
+        let text = text_content(&result);
+        assert!(text.contains("Index is empty"));
+    }
+
+    #[tokio::test]
+    async fn test_find_usages_empty_index() {
+        let server = setup_empty_server();
+        let params = Parameters(TsUsagesParams {
+            symbol: "anything".to_string(),
+            kind: None,
+            limit: None,
+        });
+        let result = server.find_usages(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("Index is empty"));
     }

@@ -37,6 +37,9 @@ impl LanguageExtractor for PythonExtractor {
             }
         }
 
+        // Extract __import__() calls from the entire tree
+        extract_dynamic_imports(root, source, &mut refs);
+
         refs
     }
 }
@@ -291,5 +294,37 @@ fn extract_from_import_names(
                 line,
             });
         }
+    }
+}
+
+fn extract_dynamic_imports(node: Node<'_>, source: &[u8], out: &mut Vec<RawReference>) {
+    if node.kind() == "call"
+        && let Some(func) = node.child_by_field_name("function")
+    {
+        let func_name = node_text(func, source);
+        if func_name == "__import__"
+            && let Some(args) = node.child_by_field_name("arguments")
+        {
+            let mut arg_cursor = args.walk();
+            for arg in args.children(&mut arg_cursor) {
+                if arg.kind() == "string" {
+                    let raw = node_text(arg, source);
+                    let target = raw.trim_matches(|c| c == '"' || c == '\'').to_string();
+                    if !target.is_empty() {
+                        out.push(RawReference {
+                            source_symbol: String::new(),
+                            target_name: target,
+                            kind: "import",
+                            line: node.start_position().row as u32 + 1,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        extract_dynamic_imports(child, source, out);
     }
 }

@@ -36,6 +36,9 @@ impl LanguageExtractor for TypeScriptExtractor {
             }
         }
 
+        // Extract require() and dynamic import() calls from the entire tree
+        extract_dynamic_imports(root, source, &mut refs);
+
         refs
     }
 }
@@ -313,5 +316,40 @@ fn collect_import_names(node: Node<'_>, source: &[u8], line: u32, out: &mut Vec<
                 collect_import_names(child, source, line, out);
             }
         }
+    }
+}
+
+fn extract_dynamic_imports(node: Node<'_>, source: &[u8], out: &mut Vec<RawReference>) {
+    if node.kind() == "call_expression" {
+        let func = node.child_by_field_name("function");
+        let args = node.child_by_field_name("arguments");
+
+        if let (Some(func_node), Some(args_node)) = (func, args) {
+            let func_name = node_text(func_node, source);
+
+            // require("module") or import("module")
+            if func_name == "require" || func_node.kind() == "import" {
+                let mut arg_cursor = args_node.walk();
+                for arg in args_node.children(&mut arg_cursor) {
+                    if arg.kind() == "string" || arg.kind() == "template_string" {
+                        let raw = node_text(arg, source);
+                        let target = raw.trim_matches(|c| c == '"' || c == '\'' || c == '`');
+                        if !target.is_empty() {
+                            out.push(RawReference {
+                                source_symbol: String::new(),
+                                target_name: target.to_string(),
+                                kind: "import",
+                                line: node.start_position().row as u32 + 1,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        extract_dynamic_imports(child, source, out);
     }
 }

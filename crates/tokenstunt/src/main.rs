@@ -290,10 +290,13 @@ async fn main() -> Result<()> {
                 .await
                 .context("failed to start MCP server")?;
 
-            // Index in background while the server is already accepting requests
+            // Index in background on a dedicated blocking thread so we don't
+            // starve the async MCP transport. index_directory does synchronous
+            // filesystem I/O, tree-sitter parsing, and SQLite writes.
             let bg_indexer = Arc::clone(&indexer);
             let bg_root = ctx.root;
-            let bg_handle = tokio::spawn(async move {
+            let async_handle = tokio::runtime::Handle::current();
+            let bg_handle = tokio::task::spawn_blocking(move || {
                 bg_indexer.set_index_state(tokenstunt_index::INDEX_STATE_RUNNING);
                 let progress = output::LogProgress;
                 match bg_indexer.index_directory(&bg_root, &progress) {
@@ -303,11 +306,11 @@ async fn main() -> Result<()> {
                             blocks = stats.blocks,
                             "indexing complete"
                         );
-                        bg_indexer.await_embeddings().await;
+                        async_handle.block_on(bg_indexer.await_embeddings());
 
                         let backfilled = bg_indexer.backfill_embeddings().unwrap_or(0);
                         if backfilled > 0 {
-                            bg_indexer.await_embeddings().await;
+                            async_handle.block_on(bg_indexer.await_embeddings());
                         }
 
                         let root_str = bg_root.to_str().unwrap_or("");

@@ -2986,4 +2986,69 @@ fn factorial(n: u64) -> u64 {
             "expected multi-line doc comment"
         );
     }
+
+    #[test]
+    fn test_typescript_require_extraction() {
+        let src = r#"
+const fs = require("fs");
+const path = require('path');
+
+function readConfig() {
+    return fs.readFileSync(path.join(__dirname, 'config.json'));
+}
+"#;
+        let result = make_extractor().extract(src, Language::TypeScript).unwrap();
+        let ref_names: Vec<&str> = result
+            .references
+            .iter()
+            .map(|r| r.target_name.as_str())
+            .collect();
+        assert!(
+            ref_names.contains(&"fs"),
+            "missing require('fs'), got: {ref_names:?}"
+        );
+        assert!(
+            ref_names.contains(&"path"),
+            "missing require('path'), got: {ref_names:?}"
+        );
+    }
+
+    #[test]
+    fn test_typescript_dynamic_import_extraction() {
+        let src = r#"
+async function loadModule() {
+    const mod = await import("./lazy-module");
+    return mod.default;
+}
+"#;
+        let result = make_extractor().extract(src, Language::TypeScript).unwrap();
+        let ref_names: Vec<&str> = result
+            .references
+            .iter()
+            .map(|r| r.target_name.as_str())
+            .collect();
+        assert!(
+            ref_names.contains(&"./lazy-module"),
+            "missing dynamic import('./lazy-module'), got: {ref_names:?}"
+        );
+    }
+
+    #[test]
+    fn test_python_dunder_import_extraction() {
+        let src = r#"
+def load_plugin(name):
+    mod = __import__("plugins")
+    return getattr(mod, name)
+"#;
+        let result = make_extractor().extract(src, Language::Python).unwrap();
+        let ref_names: Vec<&str> = result
+            .references
+            .iter()
+            .map(|r| r.target_name.as_str())
+            .collect();
+        assert!(
+            ref_names.contains(&"plugins"),
+            "missing __import__('plugins'), got: {ref_names:?}"
+        );
+    }
 }
