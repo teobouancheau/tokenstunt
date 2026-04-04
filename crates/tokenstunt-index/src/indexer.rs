@@ -94,10 +94,7 @@ impl Indexer {
     }
 
     pub fn last_error(&self) -> Option<String> {
-        self.last_error
-            .lock()
-            .ok()
-            .and_then(|lock| lock.clone())
+        self.last_error.lock().ok().and_then(|lock| lock.clone())
     }
 
     pub fn request_shutdown(&self) {

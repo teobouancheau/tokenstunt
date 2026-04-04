@@ -144,8 +144,7 @@ impl TokenStuntServer {
 
         if file_count == 0 && state == tokenstunt_index::INDEX_STATE_RUNNING {
             return Ok(Some(
-                "Index is empty (0 files). Indexing is in progress, try again shortly."
-                    .to_string(),
+                "Index is empty (0 files). Indexing is in progress, try again shortly.".to_string(),
             ));
         }
 
@@ -453,7 +452,10 @@ impl TokenStuntServer {
         name = "list_file_symbols",
         description = "Returns all symbols in a file with signatures and line numbers. Use instead of Read to understand file structure."
     )]
-    async fn list_file_symbols(&self, params: Parameters<TsFileParams>) -> Result<CallToolResult, McpError> {
+    async fn list_file_symbols(
+        &self,
+        params: Parameters<TsFileParams>,
+    ) -> Result<CallToolResult, McpError> {
         let p = params.0;
         let store = self.indexer.store();
 

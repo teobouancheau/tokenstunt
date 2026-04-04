@@ -47,10 +47,7 @@ pub fn build_setup_report(store: &Store, root: &Path, ctx: &SetupContext) -> Res
 
     if ctx.index_state == tokenstunt_index::INDEX_STATE_FAILED {
         out.push('\n');
-        let err = ctx
-            .last_error
-            .as_deref()
-            .unwrap_or("unknown error");
+        let err = ctx.last_error.as_deref().unwrap_or("unknown error");
         out.push_str(&render::notice(&format!("Indexing failed: {err}")));
         out.push('\n');
     } else if file_count == 0 && ctx.index_state == tokenstunt_index::INDEX_STATE_RUNNING {

@@ -405,14 +405,8 @@ mod tests {
 
     #[test]
     fn test_build_fts_query_phrase() {
-        assert_eq!(
-            build_fts_query("\"error handler\""),
-            "\"error handler\""
-        );
-        assert_eq!(
-            build_fts_query("\"single\""),
-            "\"single\""
-        );
+        assert_eq!(build_fts_query("\"error handler\""), "\"error handler\"");
+        assert_eq!(build_fts_query("\"single\""), "\"single\"");
     }
 
     #[test]

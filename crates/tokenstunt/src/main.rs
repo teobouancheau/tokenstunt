@@ -324,10 +324,8 @@ async fn main() -> Result<()> {
                             }
                         }
 
-                        match tokenstunt_index::FileWatcher::start(
-                            Arc::clone(&bg_indexer),
-                            bg_root,
-                        ) {
+                        match tokenstunt_index::FileWatcher::start(Arc::clone(&bg_indexer), bg_root)
+                        {
                             Ok(watcher) => bg_indexer.set_watcher(watcher),
                             Err(e) => warn!(error = %e, "failed to start file watcher"),
                         }
@@ -675,10 +673,7 @@ mod tests {
         let (server_read, mut client_write) = tokio::io::duplex(1024);
 
         let server_handle = tokio::spawn(async move {
-            let service = server
-                .serve((server_read, server_write))
-                .await
-                .unwrap();
+            let service = server.serve((server_read, server_write)).await.unwrap();
             service.waiting().await.unwrap();
         });
 
@@ -722,14 +717,10 @@ mod tests {
         drop(reader);
 
         // Server should exit
-        let result = tokio::time::timeout(std::time::Duration::from_secs(5), server_handle)
+        tokio::time::timeout(std::time::Duration::from_secs(5), server_handle)
             .await
             .expect("server did not exit within timeout")
             .expect("server task panicked");
-
-        // The server may return an error or Ok depending on how EOF is handled
-        // The important thing is that it exited and the code path was covered
-        let _ = result;
     }
 
     #[test]
