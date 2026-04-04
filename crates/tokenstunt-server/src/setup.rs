@@ -5,10 +5,23 @@ use tokenstunt_store::Store;
 
 use crate::render;
 
-pub fn build_setup_report(store: &Store, root: &Path, has_embeddings: bool) -> Result<String> {
+pub struct SetupContext {
+    pub has_embeddings: bool,
+    pub index_state: u8,
+    pub last_error: Option<String>,
+}
+
+pub fn build_setup_report(store: &Store, root: &Path, ctx: &SetupContext) -> Result<String> {
     let file_count = store.file_count()?;
     let block_count = store.block_count()?;
     let (dep_total, dep_resolved) = store.dependency_count()?;
+
+    let state_label = match ctx.index_state {
+        tokenstunt_index::INDEX_STATE_RUNNING => "In progress",
+        tokenstunt_index::INDEX_STATE_READY => "Ready",
+        tokenstunt_index::INDEX_STATE_FAILED => "Failed",
+        _ => "Idle",
+    };
 
     let mut out = render::header("Setup", "Token Stunt");
     out.push_str("\n\n");
@@ -20,6 +33,8 @@ pub fn build_setup_report(store: &Store, root: &Path, has_embeddings: bool) -> R
         &store.db_path().display().to_string(),
     ));
     out.push('\n');
+    out.push_str(&render::kv_line("Indexing", state_label));
+    out.push('\n');
     out.push_str(&render::kv_line("Files", &file_count.to_string()));
     out.push('\n');
     out.push_str(&render::kv_line("Code Blocks", &block_count.to_string()));
@@ -30,7 +45,18 @@ pub fn build_setup_report(store: &Store, root: &Path, has_embeddings: bool) -> R
     ));
     out.push('\n');
 
-    if file_count == 0 {
+    if ctx.index_state == tokenstunt_index::INDEX_STATE_FAILED {
+        out.push('\n');
+        let err = ctx.last_error.as_deref().unwrap_or("unknown error");
+        out.push_str(&render::notice(&format!("Indexing failed: {err}")));
+        out.push('\n');
+    } else if file_count == 0 && ctx.index_state == tokenstunt_index::INDEX_STATE_RUNNING {
+        out.push('\n');
+        out.push_str(&render::notice(
+            "Indexing is in progress. Tools will return results once complete.",
+        ));
+        out.push('\n');
+    } else if file_count == 0 {
         out.push('\n');
         out.push_str(&render::notice(
             "No files indexed. Run `tokenstunt index` or restart the server.",
@@ -51,7 +77,7 @@ pub fn build_setup_report(store: &Store, root: &Path, has_embeddings: bool) -> R
     }
 
     out.push('\n');
-    if has_embeddings {
+    if ctx.has_embeddings {
         let emb_count = store.embedding_count()?;
         let items = vec![render::TreeItem {
             label: format!(
@@ -99,11 +125,19 @@ mod tests {
         (store, PathBuf::from("/test"))
     }
 
+    fn ready_ctx(has_embeddings: bool) -> SetupContext {
+        SetupContext {
+            has_embeddings,
+            index_state: tokenstunt_index::INDEX_STATE_READY,
+            last_error: None,
+        }
+    }
+
     #[test]
     fn test_no_files_indexed() {
         let store = Store::open_in_memory().unwrap();
         let root = PathBuf::from("/empty-project");
-        let report = build_setup_report(&store, &root, false).unwrap();
+        let report = build_setup_report(&store, &root, &ready_ctx(false)).unwrap();
         assert!(report.contains("No files indexed"));
         assert!(report.contains("tokenstunt index"));
         assert!(report.contains("Files"));
@@ -113,10 +147,11 @@ mod tests {
     #[test]
     fn test_no_embeddings() {
         let (store, root) = setup_store();
-        let report = build_setup_report(&store, &root, false).unwrap();
+        let report = build_setup_report(&store, &root, &ready_ctx(false)).unwrap();
         assert!(report.contains("Not configured"));
         assert!(report.contains("config.toml"));
         assert!(report.contains("Files"));
+        assert!(report.contains("Ready"));
     }
 
     #[test]
@@ -126,7 +161,7 @@ mod tests {
         store
             .insert_embedding(block_id, &[0.1, 0.2, 0.3], "test")
             .unwrap();
-        let report = build_setup_report(&store, &root, true).unwrap();
+        let report = build_setup_report(&store, &root, &ready_ctx(true)).unwrap();
         assert!(report.contains("Configured"));
         assert!(report.contains("1/1"));
         assert!(report.contains("100%"));
@@ -158,8 +193,36 @@ mod tests {
             .insert_embedding(block_id, &[0.1, 0.2, 0.3], "test")
             .unwrap();
 
-        let report = build_setup_report(&store, &root, true).unwrap();
+        let report = build_setup_report(&store, &root, &ready_ctx(true)).unwrap();
         assert!(report.contains("1/2"));
         assert!(report.contains("50%"));
+    }
+
+    #[test]
+    fn test_indexing_in_progress() {
+        let store = Store::open_in_memory().unwrap();
+        let root = PathBuf::from("/test");
+        let ctx = SetupContext {
+            has_embeddings: false,
+            index_state: tokenstunt_index::INDEX_STATE_RUNNING,
+            last_error: None,
+        };
+        let report = build_setup_report(&store, &root, &ctx).unwrap();
+        assert!(report.contains("In progress"));
+        assert!(report.contains("Indexing is in progress"));
+    }
+
+    #[test]
+    fn test_indexing_failed() {
+        let store = Store::open_in_memory().unwrap();
+        let root = PathBuf::from("/test");
+        let ctx = SetupContext {
+            has_embeddings: false,
+            index_state: tokenstunt_index::INDEX_STATE_FAILED,
+            last_error: Some("permission denied".to_string()),
+        };
+        let report = build_setup_report(&store, &root, &ctx).unwrap();
+        assert!(report.contains("Failed"));
+        assert!(report.contains("permission denied"));
     }
 }

@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use rmcp::ServiceExt;
 use tokenstunt_embeddings::EmbeddingProvider;
-use tracing::info;
+use tracing::{info, warn};
 
 #[derive(Parser)]
 #[command(
@@ -263,25 +263,6 @@ fn setup_claude_config() -> Result<()> {
     Ok(())
 }
 
-async fn run_mcp_server<T, A>(
-    server: tokenstunt_server::TokenStuntServer,
-    transport: T,
-) -> Result<()>
-where
-    T: rmcp::transport::IntoTransport<rmcp::service::RoleServer, std::io::Error, A>
-        + Send
-        + 'static,
-{
-    let service = server
-        .serve(transport)
-        .await
-        .context("failed to start MCP server")?;
-
-    service.waiting().await?;
-    info!("server stopped");
-    Ok(())
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -291,45 +272,80 @@ async fn main() -> Result<()> {
             init_logging("tokenstunt=warn");
 
             let ctx = init_context_with_detect(root, db).await?;
+            let has_embeddings = ctx.embedder.is_some();
             let indexer = Arc::new(create_indexer(ctx.store, ctx.embedder, ctx.batch_size)?);
-
-            let progress = output::IndicatifProgress::new();
-            let stats = indexer.index_directory(&ctx.root, &progress)?;
-            indexer.await_embeddings().await;
-
-            let backfilled = indexer.backfill_embeddings()?;
-            if backfilled > 0 {
-                indexer.await_embeddings().await;
-            }
-
-            let root_str = ctx.root.to_str().context("non-UTF-8 path")?;
-            let repo_name = resolve_repo_name(&ctx.root);
-            let repo_id = indexer.store().ensure_repo(root_str, repo_name)?;
-            let reconcile_stats = indexer.reconcile(&ctx.root, repo_id)?;
-            info!(
-                updated = reconcile_stats.updated,
-                unchanged = reconcile_stats.unchanged,
-                deleted = reconcile_stats.deleted,
-                "reconciliation complete"
-            );
-
-            let _watcher =
-                tokenstunt_index::FileWatcher::start(Arc::clone(&indexer), ctx.root.clone())?;
-
-            let has_embeddings = indexer.embedder().is_some();
-
-            output::print_serve_banner(&ctx.root, stats.files, stats.blocks, true);
 
             let server = tokenstunt_server::TokenStuntServer::with_config(
                 Arc::clone(&indexer),
-                ctx.root,
+                ctx.root.clone(),
                 has_embeddings,
                 ctx.hybrid_alpha,
                 ctx.default_limit,
             );
 
+            // Start MCP transport immediately so the client doesn't time out
             let transport = rmcp::transport::io::stdio();
-            run_mcp_server(server, transport).await
+            let service = server
+                .serve(transport)
+                .await
+                .context("failed to start MCP server")?;
+
+            // Index in background while the server is already accepting requests
+            let bg_indexer = Arc::clone(&indexer);
+            let bg_root = ctx.root;
+            let bg_handle = tokio::spawn(async move {
+                bg_indexer.set_index_state(tokenstunt_index::INDEX_STATE_RUNNING);
+                let progress = output::LogProgress;
+                match bg_indexer.index_directory(&bg_root, &progress) {
+                    Ok(stats) => {
+                        info!(
+                            files = stats.files,
+                            blocks = stats.blocks,
+                            "indexing complete"
+                        );
+                        bg_indexer.await_embeddings().await;
+
+                        let backfilled = bg_indexer.backfill_embeddings().unwrap_or(0);
+                        if backfilled > 0 {
+                            bg_indexer.await_embeddings().await;
+                        }
+
+                        let root_str = bg_root.to_str().unwrap_or("");
+                        let repo_name = resolve_repo_name(&bg_root);
+                        if let Ok(repo_id) = bg_indexer.store().ensure_repo(root_str, repo_name) {
+                            match bg_indexer.reconcile(&bg_root, repo_id) {
+                                Ok(stats) => info!(
+                                    updated = stats.updated,
+                                    unchanged = stats.unchanged,
+                                    deleted = stats.deleted,
+                                    "reconciliation complete"
+                                ),
+                                Err(e) => warn!(error = %e, "reconciliation failed"),
+                            }
+                        }
+
+                        match tokenstunt_index::FileWatcher::start(Arc::clone(&bg_indexer), bg_root)
+                        {
+                            Ok(watcher) => bg_indexer.set_watcher(watcher),
+                            Err(e) => warn!(error = %e, "failed to start file watcher"),
+                        }
+
+                        bg_indexer.set_index_state(tokenstunt_index::INDEX_STATE_READY);
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "background indexing failed");
+                        bg_indexer.set_last_error(e.to_string());
+                        bg_indexer.set_index_state(tokenstunt_index::INDEX_STATE_FAILED);
+                    }
+                }
+            });
+
+            service.waiting().await?;
+            info!("server stopping, waiting for background tasks");
+            indexer.request_shutdown();
+            let _ = bg_handle.await;
+            info!("server stopped");
+            Ok(())
         }
 
         Command::Index { root, db } => {
@@ -656,8 +672,10 @@ mod tests {
         let (client_read, server_write) = tokio::io::duplex(1024);
         let (server_read, mut client_write) = tokio::io::duplex(1024);
 
-        let server_handle =
-            tokio::spawn(async move { run_mcp_server(server, (server_read, server_write)).await });
+        let server_handle = tokio::spawn(async move {
+            let service = server.serve((server_read, server_write)).await.unwrap();
+            service.waiting().await.unwrap();
+        });
 
         // Send an MCP initialize request to trigger the server handshake
         use tokio::io::AsyncWriteExt;
@@ -699,14 +717,10 @@ mod tests {
         drop(reader);
 
         // Server should exit
-        let result = tokio::time::timeout(std::time::Duration::from_secs(5), server_handle)
+        tokio::time::timeout(std::time::Duration::from_secs(5), server_handle)
             .await
             .expect("server did not exit within timeout")
             .expect("server task panicked");
-
-        // The server may return an error or Ok depending on how EOF is handled
-        // The important thing is that it exited and the code path was covered
-        let _ = result;
     }
 
     #[test]

@@ -4,7 +4,7 @@ description: Exact symbol lookup by name with full definition
 argument-hint: <name>
 ---
 
-Look up the exact definition of "$ARGUMENTS" using the `ts_symbol` MCP tool.
+Look up the exact definition of "$ARGUMENTS" using the `lookup_symbol` MCP tool.
 
 ## How to use
 
@@ -19,7 +19,8 @@ Look up the exact definition of "$ARGUMENTS" using the `ts_symbol` MCP tool.
 
 ## Handling edge cases
 
-- **Not found**: Tell the user clearly. Suggest `/tokenstunt-search <name>` for a fuzzy search instead.
+- **Index not ready**: If the response says "Index is empty", indexing is still in progress. Wait a moment and retry, or run `/tokenstunt-setup` to check status. Do NOT suggest alternative queries.
+- **Not found**: Tell the user clearly. Suggest `/tokenstunt-search <name>` for a broader search instead.
 - **Multiple matches**: Show all matches. Let the user identify which one they need.
 
 ## Follow-up suggestions

@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
@@ -19,6 +20,12 @@ const EMBEDDING_RETRY_BASE_MS: u64 = 500;
 use crate::progress::{EmbeddingProgress, IndexProgress};
 use crate::walker;
 
+/// Indexing lifecycle states.
+pub const INDEX_STATE_IDLE: u8 = 0;
+pub const INDEX_STATE_RUNNING: u8 = 1;
+pub const INDEX_STATE_READY: u8 = 2;
+pub const INDEX_STATE_FAILED: u8 = 3;
+
 pub struct Indexer {
     store: Store,
     extractor: SymbolExtractor,
@@ -26,6 +33,10 @@ pub struct Indexer {
     embedding_handles: Mutex<Vec<JoinHandle<()>>>,
     embedding_progress: Option<Arc<dyn EmbeddingProgress>>,
     batch_size: usize,
+    watcher: Mutex<Option<crate::FileWatcher>>,
+    index_state: AtomicU8,
+    last_error: Mutex<Option<String>>,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl Indexer {
@@ -43,6 +54,10 @@ impl Indexer {
             embedding_handles: Mutex::new(Vec::new()),
             embedding_progress: None,
             batch_size: batch_size.unwrap_or(32),
+            watcher: Mutex::new(None),
+            index_state: AtomicU8::new(INDEX_STATE_IDLE),
+            last_error: Mutex::new(None),
+            shutdown: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -56,6 +71,38 @@ impl Indexer {
 
     pub fn set_embedding_progress(&mut self, progress: Arc<dyn EmbeddingProgress>) {
         self.embedding_progress = Some(progress);
+    }
+
+    pub fn set_watcher(&self, watcher: crate::FileWatcher) {
+        if let Ok(mut lock) = self.watcher.lock() {
+            *lock = Some(watcher);
+        }
+    }
+
+    pub fn index_state(&self) -> u8 {
+        self.index_state.load(Ordering::Relaxed)
+    }
+
+    pub fn set_index_state(&self, state: u8) {
+        self.index_state.store(state, Ordering::Relaxed);
+    }
+
+    pub fn set_last_error(&self, error: String) {
+        if let Ok(mut lock) = self.last_error.lock() {
+            *lock = Some(error);
+        }
+    }
+
+    pub fn last_error(&self) -> Option<String> {
+        self.last_error.lock().ok().and_then(|lock| lock.clone())
+    }
+
+    pub fn request_shutdown(&self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+    }
+
+    fn is_shutdown_requested(&self) -> bool {
+        self.shutdown.load(Ordering::Relaxed)
     }
 
     fn spawn_embeddings_if_needed(&self, embedding_work: Vec<(i64, String)>) {
@@ -126,6 +173,15 @@ impl Indexer {
 
         // Phase 1: collect changes (no DB lock held during I/O and parsing)
         let collected = self.collect_index_changes(root, repo_id, &entries, &registry, progress)?;
+
+        if self.is_shutdown_requested() {
+            info!("shutdown requested, skipping write phase");
+            return Ok(IndexStats {
+                skipped: collected.skipped,
+                errors: collected.errors,
+                ..Default::default()
+            });
+        }
 
         // Phase 2: apply all changes in one fast write transaction
         let mut embedding_work: Vec<(i64, String)> = Vec::new();

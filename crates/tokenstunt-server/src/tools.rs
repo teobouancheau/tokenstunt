@@ -120,14 +120,64 @@ impl TokenStuntServer {
         }
     }
 
+    /// Returns Some(message) if the index is empty or unhealthy, None if ready.
+    fn check_index_health(&self) -> Result<Option<String>, McpError> {
+        let state = self.indexer.index_state();
+
+        if state == tokenstunt_index::INDEX_STATE_FAILED {
+            let err = self
+                .indexer
+                .last_error()
+                .unwrap_or_else(|| "unknown error".to_string());
+            return Ok(Some(format!(
+                "Indexing failed: {err}\nCall run_diagnostics for details."
+            )));
+        }
+
+        let store = self.indexer.store();
+        let file_count = store
+            .file_count()
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let block_count = store
+            .block_count()
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
+        if file_count == 0 && state == tokenstunt_index::INDEX_STATE_RUNNING {
+            return Ok(Some(
+                "Index is empty (0 files). Indexing is in progress, try again shortly.".to_string(),
+            ));
+        }
+
+        if file_count == 0 {
+            return Ok(Some(
+                "Index is empty (0 files). Check that the server root path is correct.\n\
+                 Call run_diagnostics for details."
+                    .to_string(),
+            ));
+        }
+
+        if block_count == 0 {
+            return Ok(Some(format!(
+                "Index has {file_count} files but 0 code blocks. \
+                 The project's language may not be supported.\n\
+                 Call run_diagnostics for details."
+            )));
+        }
+
+        Ok(None)
+    }
+
     #[tool(
-        name = "ts_search",
-        description = "Semantic code search — returns exact function/class/type bodies ranked by relevance. Use instead of Grep+Read when searching by concept or keyword. Saves 95% tokens vs reading full files."
+        name = "search_code",
+        description = "Returns ranked function/class/type bodies matching a query. Use instead of Grep+Read for any code lookup."
     )]
-    async fn ts_search(
+    async fn search_code(
         &self,
         params: Parameters<TsSearchParams>,
     ) -> Result<CallToolResult, McpError> {
+        if let Some(msg) = self.check_index_health()? {
+            return Ok(CallToolResult::success(vec![Content::text(msg)]));
+        }
         let p = params.0;
 
         // Compute embedding async before calling synchronous search
@@ -168,7 +218,10 @@ impl TokenStuntServer {
         let page: Vec<_> = results
             .iter()
             .skip(offset)
-            .map(|r| (r.block.clone(), Some(r.score)))
+            .map(|r| format::SearchBlock {
+                block: r.block.clone(),
+                source: Some(r.source),
+            })
             .collect();
 
         let mut output = format::format_blocks(&query_text, &page);
@@ -184,13 +237,16 @@ impl TokenStuntServer {
     }
 
     #[tool(
-        name = "ts_symbol",
-        description = "Exact symbol lookup by name — returns the full definition with file path and line numbers. Faster than Grep for known symbol names."
+        name = "lookup_symbol",
+        description = "Returns the full definition of a symbol by exact name. Use when you know the symbol name."
     )]
-    async fn ts_symbol(
+    async fn lookup_symbol(
         &self,
         params: Parameters<TsSymbolParams>,
     ) -> Result<CallToolResult, McpError> {
+        if let Some(msg) = self.check_index_health()? {
+            return Ok(CallToolResult::success(vec![Content::text(msg)]));
+        }
         let p = params.0;
         let engine = SearchEngine::with_alpha(self.indexer.store(), self.hybrid_alpha);
 
@@ -216,20 +272,21 @@ impl TokenStuntServer {
 
         let mut out = render::header("Symbol", &p.name);
         out.push_str("\n\n");
-
-        let blocks: Vec<_> = results.iter().map(|b| (b.clone(), None)).collect();
-        out.push_str(&format::format_symbol_blocks(&blocks));
+        out.push_str(&format::format_symbol_blocks(&results));
         Ok(CallToolResult::success(vec![Content::text(out)]))
     }
 
     #[tool(
-        name = "ts_context",
-        description = "Symbol definition + dependency graph — shows what this symbol calls and what calls it. Use to understand coupling before modifying code."
+        name = "show_context",
+        description = "Returns a symbol's definition, what it calls, and what calls it. Use before modifying code."
     )]
-    async fn ts_context(
+    async fn show_context(
         &self,
         params: Parameters<TsContextParams>,
     ) -> Result<CallToolResult, McpError> {
+        if let Some(msg) = self.check_index_health()? {
+            return Ok(CallToolResult::success(vec![Content::text(msg)]));
+        }
         let p = params.0;
         let store = self.indexer.store();
 
@@ -324,13 +381,16 @@ impl TokenStuntServer {
     }
 
     #[tool(
-        name = "ts_overview",
-        description = "Project structure overview — module tree, language breakdown, public API surface, and entry points. Start here to orient in an unfamiliar codebase."
+        name = "show_overview",
+        description = "Returns project structure: modules, languages, public API, entry points. Use first in unfamiliar codebases."
     )]
-    async fn ts_overview(
+    async fn show_overview(
         &self,
         params: Parameters<TsOverviewParams>,
     ) -> Result<CallToolResult, McpError> {
+        if let Some(msg) = self.check_index_health()? {
+            return Ok(CallToolResult::success(vec![Content::text(msg)]));
+        }
         let p = params.0;
         let store = self.indexer.store();
         let scope = p.scope.as_deref().unwrap_or("");
@@ -351,28 +411,35 @@ impl TokenStuntServer {
     }
 
     #[tool(
-        name = "ts_setup",
-        description = "Project diagnostics: index health, languages, embeddings status, and configuration guidance."
+        name = "run_diagnostics",
+        description = "Returns index health, indexing state, languages, and embeddings status. Use when tools report empty index."
     )]
-    async fn ts_setup(
+    async fn run_diagnostics(
         &self,
         _params: Parameters<TsSetupParams>,
     ) -> Result<CallToolResult, McpError> {
-        let report =
-            crate::setup::build_setup_report(self.indexer.store(), &self.root, self.has_embeddings)
-                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let ctx = crate::setup::SetupContext {
+            has_embeddings: self.has_embeddings,
+            index_state: self.indexer.index_state(),
+            last_error: self.indexer.last_error(),
+        };
+        let report = crate::setup::build_setup_report(self.indexer.store(), &self.root, &ctx)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         Ok(CallToolResult::success(vec![Content::text(report)]))
     }
 
     #[tool(
-        name = "ts_impact",
-        description = "Blast radius analysis: shows all symbols and files affected by changing a given symbol. Use before refactoring."
+        name = "analyze_impact",
+        description = "Returns all symbols and files affected by changing a symbol. Use before refactoring."
     )]
-    async fn ts_impact(
+    async fn analyze_impact(
         &self,
         params: Parameters<TsImpactParams>,
     ) -> Result<CallToolResult, McpError> {
+        if let Some(msg) = self.check_index_health()? {
+            return Ok(CallToolResult::success(vec![Content::text(msg)]));
+        }
         let p = params.0;
         let result = crate::impact::walk_dependents(self.indexer.store(), &p.symbol, p.max_depth)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
@@ -382,10 +449,13 @@ impl TokenStuntServer {
     }
 
     #[tool(
-        name = "ts_file",
-        description = "All symbols in a file with signatures and line numbers. Use instead of Read when you need to understand file structure."
+        name = "list_file_symbols",
+        description = "Returns all symbols in a file with signatures and line numbers. Use instead of Read to understand file structure."
     )]
-    async fn ts_file(&self, params: Parameters<TsFileParams>) -> Result<CallToolResult, McpError> {
+    async fn list_file_symbols(
+        &self,
+        params: Parameters<TsFileParams>,
+    ) -> Result<CallToolResult, McpError> {
         let p = params.0;
         let store = self.indexer.store();
 
@@ -404,10 +474,10 @@ impl TokenStuntServer {
     }
 
     #[tool(
-        name = "ts_usages",
-        description = "Find all call sites and usages of a symbol. Shows the actual code at each usage location."
+        name = "find_usages",
+        description = "Returns all call sites and usages of a symbol with the actual code at each location. Use to find where a symbol is used."
     )]
-    async fn ts_usages(
+    async fn find_usages(
         &self,
         params: Parameters<TsUsagesParams>,
     ) -> Result<CallToolResult, McpError> {
@@ -550,7 +620,14 @@ impl rmcp::handler::server::ServerHandler for TokenStuntServer {
                     .with_description("Smart code search for Claude Code. Finds the exact code you need — saves 95% of tokens.")
             )
             .with_instructions(
-                "Token Stunt provides AST-level semantic code search. Use ts_search instead of Grep+Read when looking for code by concept — it returns exact symbol bodies, saving 95% of tokens. Use ts_symbol for exact name lookups. Use ts_file to understand a file's structure without reading the whole file. Use ts_usages to find all call sites of a symbol. Use ts_context to understand what a symbol calls and what calls it. Use ts_impact before refactoring to understand blast radius. Use ts_overview to orient in the project. Use ts_setup to check index health. Only use Read for files you need to modify. Recommended workflow: ts_overview → ts_search → ts_symbol → ts_file/ts_usages → ts_context/ts_impact → Read."
+                "Token Stunt indexes code into searchable symbols. Tools return exact function/class bodies instead of full files.\n\
+                 \n\
+                 If any tool returns 'Index is empty' or 'Indexing is in progress', call run_diagnostics.\n\
+                 If a query returns no results, try broader terms or check the index with run_diagnostics.\n\
+                 \n\
+                 Workflow: show_overview -> search_code -> lookup_symbol -> show_context/analyze_impact -> Read (only for files you will edit).\n\
+                 \n\
+                 Use search_code instead of Grep+Read for any code lookup. Use Read only for files you intend to modify."
             )
     }
 }
@@ -641,7 +718,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ts_search_returns_results() {
+    async fn test_search_code_returns_results() {
         let server = setup_server();
         let params = Parameters(TsSearchParams {
             query: "authenticate".to_string(),
@@ -651,7 +728,7 @@ mod tests {
             limit: None,
             offset: None,
         });
-        let result = server.ts_search(params).await.unwrap();
+        let result = server.search_code(params).await.unwrap();
         let text = text_content(&result);
         assert!(
             text.contains("authenticateUser"),
@@ -660,7 +737,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ts_search_no_results() {
+    async fn test_search_code_no_results() {
         let server = setup_server();
         let params = Parameters(TsSearchParams {
             query: "zzzznonexistent".to_string(),
@@ -670,40 +747,40 @@ mod tests {
             limit: None,
             offset: None,
         });
-        let result = server.ts_search(params).await.unwrap();
+        let result = server.search_code(params).await.unwrap();
         let text = text_content(&result);
         assert_eq!(text, "No results found.");
     }
 
     #[tokio::test]
-    async fn test_ts_symbol_found() {
+    async fn test_lookup_symbol_found() {
         let server = setup_server();
         let params = Parameters(TsSymbolParams {
             name: "authenticateUser".to_string(),
             kind: None,
             file: None,
         });
-        let result = server.ts_symbol(params).await.unwrap();
+        let result = server.lookup_symbol(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("authenticateUser"));
         assert!(text.contains("src/auth.ts"));
     }
 
     #[tokio::test]
-    async fn test_ts_symbol_not_found() {
+    async fn test_lookup_symbol_not_found() {
         let server = setup_server();
         let params = Parameters(TsSymbolParams {
             name: "nonexistentSymbol".to_string(),
             kind: None,
             file: None,
         });
-        let result = server.ts_symbol(params).await.unwrap();
+        let result = server.lookup_symbol(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("not found"));
     }
 
     #[tokio::test]
-    async fn test_ts_context_both() {
+    async fn test_show_context_both() {
         let server = setup_server();
         let params = Parameters(TsContextParams {
             symbol: "authenticateUser".to_string(),
@@ -711,7 +788,7 @@ mod tests {
             file: None,
             kind: None,
         });
-        let result = server.ts_context(params).await.unwrap();
+        let result = server.show_context(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("authenticateUser"));
         assert!(
@@ -725,7 +802,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ts_context_dependencies_only() {
+    async fn test_show_context_dependencies_only() {
         let server = setup_server();
         let params = Parameters(TsContextParams {
             symbol: "authenticateUser".to_string(),
@@ -733,7 +810,7 @@ mod tests {
             file: None,
             kind: None,
         });
-        let result = server.ts_context(params).await.unwrap();
+        let result = server.show_context(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("Dependencies"));
         assert!(text.contains("validateToken"));
@@ -744,7 +821,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ts_context_dependents_only() {
+    async fn test_show_context_dependents_only() {
         let server = setup_server();
         let params = Parameters(TsContextParams {
             symbol: "validateToken".to_string(),
@@ -752,7 +829,7 @@ mod tests {
             file: None,
             kind: None,
         });
-        let result = server.ts_context(params).await.unwrap();
+        let result = server.show_context(params).await.unwrap();
         let text = text_content(&result);
         assert!(
             text.contains("Dependents"),
@@ -769,7 +846,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ts_context_not_found() {
+    async fn test_show_context_not_found() {
         let server = setup_server();
         let params = Parameters(TsContextParams {
             symbol: "nonexistentSymbol".to_string(),
@@ -777,16 +854,16 @@ mod tests {
             file: None,
             kind: None,
         });
-        let result = server.ts_context(params).await.unwrap();
+        let result = server.show_context(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("not found"));
     }
 
     #[tokio::test]
-    async fn test_ts_overview() {
+    async fn test_show_overview() {
         let server = setup_server();
         let params = Parameters(TsOverviewParams { scope: None });
-        let result = server.ts_overview(params).await.unwrap();
+        let result = server.show_overview(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("\u{25C6} Overview"), "should contain header");
         assert!(text.contains("/test"), "should contain root path");
@@ -807,14 +884,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ts_overview_uses_cache() {
+    async fn test_show_overview_uses_cache() {
         let server = setup_server();
 
         let params = Parameters(TsOverviewParams { scope: None });
-        let first = text_content(&server.ts_overview(params).await.unwrap());
+        let first = text_content(&server.show_overview(params).await.unwrap());
 
         let params = Parameters(TsOverviewParams { scope: None });
-        let second = text_content(&server.ts_overview(params).await.unwrap());
+        let second = text_content(&server.show_overview(params).await.unwrap());
         assert_eq!(first, second);
     }
 
@@ -846,7 +923,7 @@ mod tests {
     async fn test_ts_setup() {
         let server = setup_server();
         let params = Parameters(TsSetupParams {});
-        let result = server.ts_setup(params).await.unwrap();
+        let result = server.run_diagnostics(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("Setup"), "should contain setup header");
         assert!(text.contains("Files"), "should contain files info");
@@ -864,7 +941,7 @@ mod tests {
             symbol: "validateToken".to_string(),
             max_depth: None,
         });
-        let result = server.ts_impact(params).await.unwrap();
+        let result = server.analyze_impact(params).await.unwrap();
         let text = text_content(&result);
         assert!(
             text.contains("authenticateUser"),
@@ -879,11 +956,11 @@ mod tests {
             symbol: "nonexistentSymbol".to_string(),
             max_depth: None,
         });
-        let result = server.ts_impact(params).await.unwrap();
+        let result = server.analyze_impact(params).await.unwrap();
         let text = text_content(&result);
         assert!(
-            text.contains("No dependents found"),
-            "unknown symbol should have no dependents"
+            text.contains("not found in index"),
+            "unknown symbol should report not found"
         );
     }
 
@@ -916,7 +993,7 @@ mod tests {
         let server = TokenStuntServer::new(indexer, PathBuf::from("/test"), false);
 
         let params = Parameters(TsOverviewParams { scope: None });
-        let result = server.ts_overview(params).await.unwrap();
+        let result = server.show_overview(params).await.unwrap();
         let text = text_content(&result);
         assert!(
             text.contains("... 5 more"),
@@ -950,7 +1027,7 @@ mod tests {
         let server = TokenStuntServer::new(indexer, PathBuf::from("/test"), false);
 
         let params = Parameters(TsOverviewParams { scope: None });
-        let result = server.ts_overview(params).await.unwrap();
+        let result = server.show_overview(params).await.unwrap();
         let text = text_content(&result);
         assert!(
             text.contains("Entry Points"),
@@ -999,7 +1076,7 @@ mod tests {
             limit: None,
             offset: None,
         });
-        let result = server.ts_search(params).await.unwrap();
+        let result = server.search_code(params).await.unwrap();
         let text = text_content(&result);
         // Invalid kind should be treated as None (no filter), so results still returned
         assert!(
@@ -1014,34 +1091,24 @@ mod tests {
         let params = Parameters(TsOverviewParams {
             scope: Some("src/".to_string()),
         });
-        let result = server.ts_overview(params).await.unwrap();
+        let result = server.show_overview(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("Overview"), "should contain header");
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_ts_overview_empty_scope_no_data() {
-        // Server with no data to test empty branches in build_overview
+        // Server with no data: health check intercepts and returns empty index message
         let store = Store::open_in_memory().unwrap();
         let indexer = Arc::new(tokenstunt_index::Indexer::new(store, None, None).unwrap());
         let server = TokenStuntServer::new(indexer, PathBuf::from("/empty"), false);
 
         let params = Parameters(TsOverviewParams { scope: None });
-        let result = server.ts_overview(params).await.unwrap();
+        let result = server.show_overview(params).await.unwrap();
         let text = text_content(&result);
-        assert!(text.contains("Overview"), "should contain header");
-        // Empty store should not contain language/module/API sections
         assert!(
-            !text.contains("Languages"),
-            "empty store should not show languages"
-        );
-        assert!(
-            !text.contains("Modules"),
-            "empty store should not show modules"
-        );
-        assert!(
-            !text.contains("Public API"),
-            "empty store should not show public API"
+            text.contains("Index is empty"),
+            "empty store should report empty index"
         );
     }
 
@@ -1094,7 +1161,7 @@ mod tests {
             limit: None,
             offset: None,
         });
-        let result = server.ts_search(params).await.unwrap();
+        let result = server.search_code(params).await.unwrap();
         let text = text_content(&result);
         assert!(
             text.contains("authenticateUser"),
@@ -1109,7 +1176,7 @@ mod tests {
             path: "src/auth.ts".to_string(),
             kind: None,
         });
-        let result = server.ts_file(params).await.unwrap();
+        let result = server.list_file_symbols(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("File"), "should contain File header");
         assert!(
@@ -1128,7 +1195,7 @@ mod tests {
             path: "src/auth.ts".to_string(),
             kind: Some("class".to_string()),
         });
-        let result = server.ts_file(params).await.unwrap();
+        let result = server.list_file_symbols(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("UserProfile"), "should include class");
         assert!(
@@ -1144,7 +1211,7 @@ mod tests {
             path: "nonexistent.ts".to_string(),
             kind: None,
         });
-        let result = server.ts_file(params).await.unwrap();
+        let result = server.list_file_symbols(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("No symbols found"));
     }
@@ -1157,7 +1224,7 @@ mod tests {
             kind: None,
             limit: None,
         });
-        let result = server.ts_usages(params).await.unwrap();
+        let result = server.find_usages(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("Usages"), "should contain Usages header");
         assert!(
@@ -1174,7 +1241,7 @@ mod tests {
             kind: None,
             limit: None,
         });
-        let result = server.ts_usages(params).await.unwrap();
+        let result = server.find_usages(params).await.unwrap();
         let text = text_content(&result);
         assert!(
             text.contains("No usages found"),
@@ -1190,7 +1257,7 @@ mod tests {
             kind: None,
             limit: None,
         });
-        let result = server.ts_usages(params).await.unwrap();
+        let result = server.find_usages(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("not found"));
     }
@@ -1203,7 +1270,7 @@ mod tests {
             kind: None,
             limit: Some(1),
         });
-        let result = server.ts_usages(params).await.unwrap();
+        let result = server.find_usages(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("Usages"));
     }
@@ -1216,7 +1283,7 @@ mod tests {
             kind: Some("function".to_string()),
             limit: None,
         });
-        let result = server.ts_usages(params).await.unwrap();
+        let result = server.find_usages(params).await.unwrap();
         let text = text_content(&result);
         assert!(
             text.contains("Usages"),
@@ -1225,21 +1292,90 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ts_context_no_dependencies() {
+    async fn test_show_context_no_dependencies() {
         let server = setup_server();
-        // UserProfile has no dependencies, so the dependencies block should be skipped
         let params = Parameters(TsContextParams {
             symbol: "UserProfile".to_string(),
             direction: Some("dependencies".to_string()),
             file: None,
             kind: None,
         });
-        let result = server.ts_context(params).await.unwrap();
+        let result = server.show_context(params).await.unwrap();
         let text = text_content(&result);
         assert!(text.contains("UserProfile"));
         assert!(
             !text.contains("Dependencies"),
             "symbol with no deps should not show Dependencies section"
         );
+    }
+
+    fn setup_empty_server() -> TokenStuntServer {
+        let store = Store::open_in_memory().unwrap();
+        let indexer = Arc::new(tokenstunt_index::Indexer::new(store, None, None).unwrap());
+        TokenStuntServer::new(indexer, PathBuf::from("/empty"), false)
+    }
+
+    #[tokio::test]
+    async fn test_search_code_empty_index() {
+        let server = setup_empty_server();
+        let params = Parameters(TsSearchParams {
+            query: "anything".to_string(),
+            scope: None,
+            language: None,
+            symbol_kind: None,
+            limit: None,
+            offset: None,
+        });
+        let result = server.search_code(params).await.unwrap();
+        let text = text_content(&result);
+        assert!(text.contains("Index is empty"));
+    }
+
+    #[tokio::test]
+    async fn test_lookup_symbol_empty_index() {
+        let server = setup_empty_server();
+        let params = Parameters(TsSymbolParams {
+            name: "anything".to_string(),
+            kind: None,
+            file: None,
+        });
+        let result = server.lookup_symbol(params).await.unwrap();
+        let text = text_content(&result);
+        assert!(text.contains("Index is empty"));
+    }
+
+    #[tokio::test]
+    async fn test_show_context_empty_index() {
+        let server = setup_empty_server();
+        let params = Parameters(TsContextParams {
+            symbol: "anything".to_string(),
+            direction: None,
+            file: None,
+            kind: None,
+        });
+        let result = server.show_context(params).await.unwrap();
+        let text = text_content(&result);
+        assert!(text.contains("Index is empty"));
+    }
+
+    #[tokio::test]
+    async fn test_show_overview_empty_index() {
+        let server = setup_empty_server();
+        let params = Parameters(TsOverviewParams { scope: None });
+        let result = server.show_overview(params).await.unwrap();
+        let text = text_content(&result);
+        assert!(text.contains("Index is empty"));
+    }
+
+    #[tokio::test]
+    async fn test_analyze_impact_empty_index() {
+        let server = setup_empty_server();
+        let params = Parameters(TsImpactParams {
+            symbol: "anything".to_string(),
+            max_depth: None,
+        });
+        let result = server.analyze_impact(params).await.unwrap();
+        let text = text_content(&result);
+        assert!(text.contains("Index is empty"));
     }
 }

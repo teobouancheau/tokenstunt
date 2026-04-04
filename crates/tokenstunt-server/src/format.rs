@@ -1,14 +1,26 @@
+use tokenstunt_search::SearchSource;
 use tokenstunt_store::CodeBlock;
 
 use crate::render;
 
-fn format_block_entry(block: &CodeBlock) -> (String, String, String) {
+pub struct SearchBlock {
+    pub block: CodeBlock,
+    pub source: Option<SearchSource>,
+}
+
+fn format_block_entry(block: &CodeBlock, source: Option<SearchSource>) -> (String, String, String) {
     let file_path = block.file_path.as_deref().unwrap_or("unknown");
     let language = block.language.as_deref().unwrap_or("text");
     let location = format!("{file_path}:{}-{}", block.start_line, block.end_line);
+    let source_tag = match source {
+        Some(SearchSource::Bm25) => "  [keyword]",
+        Some(SearchSource::Semantic) => "  [semantic]",
+        Some(SearchSource::Hybrid) => "  [hybrid]",
+        None => "",
+    };
     (
         format!(
-            "  {}  {:<24} {location}",
+            "  {}  {:<24} {location}{source_tag}",
             render::kind_label(&block.kind),
             block.name,
         ),
@@ -17,7 +29,7 @@ fn format_block_entry(block: &CodeBlock) -> (String, String, String) {
     )
 }
 
-pub fn format_blocks(query: &str, blocks: &[(CodeBlock, Option<f64>)]) -> String {
+pub fn format_blocks(query: &str, blocks: &[SearchBlock]) -> String {
     if blocks.is_empty() {
         return String::new();
     }
@@ -31,8 +43,8 @@ pub fn format_blocks(query: &str, blocks: &[(CodeBlock, Option<f64>)]) -> String
     let mut out = render::header("Search", &hint);
     out.push('\n');
 
-    for (block, _score) in blocks {
-        let (header_line, language, content) = format_block_entry(block);
+    for sb in blocks {
+        let (header_line, language, content) = format_block_entry(&sb.block, sb.source);
         out.push_str(&format!("\n{header_line}\n\n"));
         out.push_str(&render::code_block(&language, &content));
         out.push('\n');
@@ -95,17 +107,17 @@ pub fn format_usages(symbol: &str, usages: &[(CodeBlock, String)]) -> String {
     out
 }
 
-pub fn format_symbol_blocks(blocks: &[(CodeBlock, Option<f64>)]) -> String {
+pub fn format_symbol_blocks(blocks: &[CodeBlock]) -> String {
     if blocks.is_empty() {
         return String::new();
     }
 
     let mut out = String::new();
-    for (i, (block, _score)) in blocks.iter().enumerate() {
+    for (i, block) in blocks.iter().enumerate() {
         if i > 0 {
             out.push('\n');
         }
-        let (header_line, language, content) = format_block_entry(block);
+        let (header_line, language, content) = format_block_entry(block, None);
         out.push_str(&format!("{header_line}\n\n"));
         out.push_str(&render::code_block(&language, &content));
         out.push('\n');
@@ -152,7 +164,7 @@ mod tests {
             file_path: None,
             language: None,
         };
-        let (header_line, language, _content) = format_block_entry(&block);
+        let (header_line, language, _content) = format_block_entry(&block, None);
         assert!(
             header_line.contains("unknown"),
             "missing file_path should show 'unknown'"
@@ -163,16 +175,25 @@ mod tests {
         );
     }
 
+    fn search_block(name: &str, source: Option<SearchSource>) -> SearchBlock {
+        SearchBlock {
+            block: sample_block(name),
+            source,
+        }
+    }
+
     #[test]
     fn test_format_blocks_inline_layout() {
         let blocks = vec![
-            (sample_block("a"), Some(0.9)),
-            (sample_block("b"), Some(0.8)),
+            search_block("a", Some(SearchSource::Bm25)),
+            search_block("b", Some(SearchSource::Semantic)),
         ];
         let output = format_blocks("authenticate", &blocks);
         assert!(output.contains("2 results"));
         assert!(output.contains("\"authenticate\""));
         assert!(output.contains("```typescript"));
+        assert!(output.contains("[keyword]"));
+        assert!(output.contains("[semantic]"));
         assert!(!output.contains("\u{2500}"), "should not contain separator");
     }
 
@@ -184,7 +205,7 @@ mod tests {
 
     #[test]
     fn test_format_blocks_empty_query() {
-        let blocks = vec![(sample_block("greet"), Some(0.95))];
+        let blocks = vec![search_block("greet", None)];
         let output = format_blocks("", &blocks);
         assert!(output.contains("1 results"));
         assert!(
@@ -233,7 +254,7 @@ mod tests {
 
     #[test]
     fn test_format_symbol_blocks_single() {
-        let blocks = vec![(sample_block("greet"), None)];
+        let blocks = vec![sample_block("greet")];
         let output = format_symbol_blocks(&blocks);
         assert!(output.contains("greet"));
         assert!(output.contains("```typescript"));
@@ -241,10 +262,7 @@ mod tests {
 
     #[test]
     fn test_format_symbol_blocks_multiple() {
-        let blocks = vec![
-            (sample_block("greet"), None),
-            (sample_block("farewell"), None),
-        ];
+        let blocks = vec![sample_block("greet"), sample_block("farewell")];
         let output = format_symbol_blocks(&blocks);
         assert!(output.contains("greet"));
         assert!(output.contains("farewell"));
@@ -252,10 +270,11 @@ mod tests {
 
     #[test]
     fn test_format_blocks_has_header_and_code() {
-        let blocks = vec![(sample_block("greet"), Some(0.95))];
+        let blocks = vec![search_block("greet", Some(SearchSource::Hybrid))];
         let output = format_blocks("greet", &blocks);
         assert!(output.contains("\u{25C6} Search"));
         assert!(output.contains("```typescript"));
-        assert!(!output.contains("0.95"), "should not contain score");
+        assert!(output.contains("[hybrid]"));
+        assert!(!output.contains("0.9"), "should not contain score");
     }
 }

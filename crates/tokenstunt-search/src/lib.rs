@@ -186,7 +186,6 @@ fn sanitize_fts_term(term: &str) -> String {
 fn split_identifier(input: &str) -> Vec<String> {
     let mut parts: Vec<String> = Vec::new();
 
-    // Split on dots, hyphens, colons, slashes
     let segments: Vec<&str> = input
         .split(['.', '-', ':', '/'])
         .filter(|s| !s.is_empty())
@@ -198,7 +197,6 @@ fn split_identifier(input: &str) -> Vec<String> {
             continue;
         }
 
-        // Split camelCase / PascalCase
         let camel_parts = split_camel_case(&sanitized);
         for part in &camel_parts {
             let lower = part.to_lowercase();
@@ -207,14 +205,12 @@ fn split_identifier(input: &str) -> Vec<String> {
             }
         }
 
-        // Also keep the full segment if it differs from the parts
         let full_lower = sanitized.to_lowercase();
         if !full_lower.is_empty() && !parts.contains(&full_lower) {
             parts.push(full_lower);
         }
     }
 
-    // Keep the full original term (sanitized) if it has multiple segments
     if segments.len() > 1 {
         let full = sanitize_fts_term(input).to_lowercase();
         if !full.is_empty() && !parts.contains(&full) {
@@ -233,7 +229,6 @@ fn split_camel_case(input: &str) -> Vec<String> {
     for i in 0..chars.len() {
         let c = chars[i];
         if c.is_uppercase() && !current.is_empty() {
-            // Check if this is the start of a new word
             let prev_lower = i > 0 && chars[i - 1].is_lowercase();
             let next_lower = i + 1 < chars.len() && chars[i + 1].is_lowercase();
             if prev_lower || (next_lower && current.len() > 1) {
@@ -247,7 +242,6 @@ fn split_camel_case(input: &str) -> Vec<String> {
         parts.push(current);
     }
 
-    // Only return parts if we actually split something
     if parts.len() <= 1 {
         return Vec::new();
     }
@@ -256,33 +250,65 @@ fn split_camel_case(input: &str) -> Vec<String> {
 }
 
 fn build_fts_query(input: &str) -> String {
-    let mut all_terms: Vec<String> = Vec::new();
+    let mut fts_parts: Vec<String> = Vec::new();
+    let mut remaining = input;
 
-    for word in input.split_whitespace() {
-        let parts = split_identifier(word);
-        if parts.is_empty() {
+    // Extract quoted phrases first: "exact phrase" becomes FTS5 phrase query
+    while let Some(start) = remaining.find('"') {
+        let before = &remaining[..start];
+        for word in before.split_whitespace() {
+            let id_parts = split_identifier(word);
+            if id_parts.is_empty() {
+                let sanitized = sanitize_fts_term(word);
+                if !sanitized.is_empty() {
+                    fts_parts.push(format!("{sanitized}*"));
+                }
+            } else {
+                for part in id_parts {
+                    fts_parts.push(format!("{part}*"));
+                }
+            }
+        }
+
+        let after_quote = &remaining[start + 1..];
+        if let Some(end) = after_quote.find('"') {
+            let phrase = &after_quote[..end];
+            let phrase_terms: Vec<String> = phrase
+                .split_whitespace()
+                .map(sanitize_fts_term)
+                .filter(|t| !t.is_empty())
+                .collect();
+            if !phrase_terms.is_empty() {
+                fts_parts.push(format!("\"{}\"", phrase_terms.join(" ")));
+            }
+            remaining = &after_quote[end + 1..];
+        } else {
+            remaining = after_quote;
+            break;
+        }
+    }
+
+    // Process remaining unquoted terms with identifier splitting
+    for word in remaining.split_whitespace() {
+        let id_parts = split_identifier(word);
+        if id_parts.is_empty() {
             let sanitized = sanitize_fts_term(word);
-            if !sanitized.is_empty() && !all_terms.contains(&sanitized) {
-                all_terms.push(sanitized);
+            if !sanitized.is_empty() {
+                fts_parts.push(format!("{sanitized}*"));
             }
         } else {
-            for part in parts {
-                if !all_terms.contains(&part) {
-                    all_terms.push(part);
-                }
+            for part in id_parts {
+                fts_parts.push(format!("{part}*"));
             }
         }
     }
 
-    if all_terms.is_empty() {
+    if fts_parts.is_empty() {
         return String::new();
     }
 
-    all_terms
-        .iter()
-        .map(|t| format!("{t}*"))
-        .collect::<Vec<_>>()
-        .join(" OR ")
+    // AND by default: all terms must match
+    fts_parts.join(" AND ")
 }
 
 #[cfg(test)]
@@ -332,7 +358,7 @@ mod tests {
     fn test_build_fts_query_simple() {
         assert_eq!(
             build_fts_query("authenticate user"),
-            "authenticate* OR user*"
+            "authenticate* AND user*"
         );
         assert_eq!(build_fts_query("single"), "single*");
         assert_eq!(build_fts_query(""), "");
@@ -340,7 +366,7 @@ mod tests {
 
     #[test]
     fn test_build_fts_query_special_chars() {
-        assert_eq!(build_fts_query("\"hello\""), "hello*");
+        assert_eq!(build_fts_query("\"hello\""), "\"hello\"");
         assert_eq!(build_fts_query("user_name"), "user_name*");
         assert_eq!(build_fts_query("()"), "");
     }
@@ -375,6 +401,12 @@ mod tests {
         let query = build_fts_query("std::io");
         assert!(query.contains("std*"));
         assert!(query.contains("io*"));
+    }
+
+    #[test]
+    fn test_build_fts_query_phrase() {
+        assert_eq!(build_fts_query("\"error handler\""), "\"error handler\"");
+        assert_eq!(build_fts_query("\"single\""), "\"single\"");
     }
 
     #[test]
