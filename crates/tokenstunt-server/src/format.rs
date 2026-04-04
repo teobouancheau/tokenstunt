@@ -8,7 +8,14 @@ pub struct SearchBlock {
     pub source: Option<SearchSource>,
 }
 
-fn format_block_entry(block: &CodeBlock, source: Option<SearchSource>) -> (String, String, String) {
+struct FormattedBlock {
+    header: String,
+    language: String,
+    docstring: Option<String>,
+    content: String,
+}
+
+fn format_block_entry(block: &CodeBlock, source: Option<SearchSource>) -> FormattedBlock {
     let file_path = block.file_path.as_deref().unwrap_or("unknown");
     let language = block.language.as_deref().unwrap_or("text");
     let location = format!("{file_path}:{}-{}", block.start_line, block.end_line);
@@ -18,15 +25,33 @@ fn format_block_entry(block: &CodeBlock, source: Option<SearchSource>) -> (Strin
         Some(SearchSource::Hybrid) => "  [hybrid]",
         None => "",
     };
-    (
-        format!(
+    let docstring = if block.docstring.is_empty() {
+        None
+    } else if block.docstring.len() > 200 {
+        Some(format!("{}...", &block.docstring[..197]))
+    } else {
+        Some(block.docstring.clone())
+    };
+    FormattedBlock {
+        header: format!(
             "  {}  {:<24} {location}{source_tag}",
             render::kind_label(&block.kind),
             block.name,
         ),
-        language.to_string(),
-        block.content.clone(),
-    )
+        language: language.to_string(),
+        docstring,
+        content: block.content.clone(),
+    }
+}
+
+fn render_formatted_block(fb: &FormattedBlock) -> String {
+    let mut out = format!("{}\n", fb.header);
+    if let Some(ref doc) = fb.docstring {
+        out.push_str(&format!("  {doc}\n"));
+    }
+    out.push('\n');
+    out.push_str(&render::code_block(&fb.language, &fb.content));
+    out
 }
 
 pub fn format_blocks(query: &str, blocks: &[SearchBlock]) -> String {
@@ -44,9 +69,9 @@ pub fn format_blocks(query: &str, blocks: &[SearchBlock]) -> String {
     out.push('\n');
 
     for sb in blocks {
-        let (header_line, language, content) = format_block_entry(&sb.block, sb.source);
-        out.push_str(&format!("\n{header_line}\n\n"));
-        out.push_str(&render::code_block(&language, &content));
+        let fb = format_block_entry(&sb.block, sb.source);
+        out.push('\n');
+        out.push_str(&render_formatted_block(&fb));
         out.push('\n');
     }
 
@@ -117,9 +142,8 @@ pub fn format_symbol_blocks(blocks: &[CodeBlock]) -> String {
         if i > 0 {
             out.push('\n');
         }
-        let (header_line, language, content) = format_block_entry(block, None);
-        out.push_str(&format!("{header_line}\n\n"));
-        out.push_str(&render::code_block(&language, &content));
+        let fb = format_block_entry(block, None);
+        out.push_str(&render_formatted_block(&fb));
         out.push('\n');
     }
 
@@ -164,13 +188,13 @@ mod tests {
             file_path: None,
             language: None,
         };
-        let (header_line, language, _content) = format_block_entry(&block, None);
+        let fb = format_block_entry(&block, None);
         assert!(
-            header_line.contains("unknown"),
+            fb.header.contains("unknown"),
             "missing file_path should show 'unknown'"
         );
         assert_eq!(
-            language, "text",
+            fb.language, "text",
             "missing language should fallback to 'text'"
         );
     }
@@ -276,5 +300,34 @@ mod tests {
         assert!(output.contains("```typescript"));
         assert!(output.contains("[hybrid]"));
         assert!(!output.contains("0.9"), "should not contain score");
+    }
+
+    #[test]
+    fn test_docstring_displayed() {
+        let mut block = sample_block("greet");
+        block.docstring = "Greets the user by name.".to_string();
+        let fb = format_block_entry(&block, None);
+        assert_eq!(fb.docstring.as_deref(), Some("Greets the user by name."));
+        let rendered = render_formatted_block(&fb);
+        assert!(rendered.contains("Greets the user by name."));
+    }
+
+    #[test]
+    fn test_docstring_empty_not_displayed() {
+        let block = sample_block("greet");
+        let fb = format_block_entry(&block, None);
+        assert!(fb.docstring.is_none());
+        let rendered = render_formatted_block(&fb);
+        assert!(!rendered.contains("  \n  ```"));
+    }
+
+    #[test]
+    fn test_docstring_truncated_at_200_chars() {
+        let mut block = sample_block("greet");
+        block.docstring = "A".repeat(300);
+        let fb = format_block_entry(&block, None);
+        let doc = fb.docstring.unwrap();
+        assert_eq!(doc.len(), 200);
+        assert!(doc.ends_with("..."));
     }
 }
